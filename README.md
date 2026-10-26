@@ -22,5 +22,8 @@
 
 詳しくは [`DECISIONS.md`](DECISIONS.md) にあります。
 
+## 参考にした作品
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): 要約をキャッシュに乗せる、要約の前の切り詰めなど、文脈管理の考え方を参考にした
+
 ## ライセンス
 MIT
