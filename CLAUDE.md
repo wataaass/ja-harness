@@ -5,7 +5,7 @@
 @DECISIONS.md
 
 ## 確認
-- `npm run check`: lint（Biome）・型チェック（tsc）・テスト（Vitest）をまとめて実行する。コードを変えたら必ず通す（雛形を作ってから使えるようになる）
+- `npm run check`: lint（Biome）・型チェック（tsc）・テスト（Vitest）をまとめて実行する。コードを変えたら必ず通す
 - `npm run format`: 整形を自動で直す
 
 ## 書き方
