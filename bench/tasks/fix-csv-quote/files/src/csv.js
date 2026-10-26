@@ -1,23 +1,38 @@
-const DEFAULT_DELIMITER = ",";
-const DEFAULT_QUOTE = '"';
+import { DIALECTS, getDialect, readOptionsOf, writeOptionsOf } from "./dialects.js";
+import { escapeField, stringifyCsv, stringifyRecords } from "./writer.js";
 
+export { escapeField, stringifyCsv, stringifyRecords };
+
+export const DEFAULT_DELIMITER = ",";
+export const DEFAULT_QUOTE = '"';
+
+/**
+ * 改行コードを LF にそろえ、先頭の BOM を落とす。
+ * @param {string} text
+ * @returns {string}
+ */
 export function normalizeNewlines(text) {
   return String(text).replace(/\r\n?/g, "\n").replace(/^\uFEFF/, "");
 }
 
-export function detectDelimiter(text) {
-  const sample = normalizeNewlines(text).split("\n").slice(0, 10).join("\n");
-  const candidates = [",", ";", "\t", "|"];
+/**
+ * 先頭の数行から区切り文字を推測する。引用符の中は数えない。
+ * @param {string} text
+ * @param {string[]} [candidates]
+ * @returns {string}
+ */
+export function detectDelimiter(text, candidates = [",", ";", "\t", "|"]) {
+  const sample = normalizeNewlines(text).split("\n").slice(0, 20).join("\n");
   let best = DEFAULT_DELIMITER;
   let bestCount = -1;
   for (const candidate of candidates) {
     let count = 0;
     let quoted = false;
-    for (let i = 0; i < sample.length; i += 1) {
-      const ch = sample[i];
-      if (ch === DEFAULT_QUOTE) {
+    for (let index = 0; index < sample.length; index += 1) {
+      const char = sample[index];
+      if (char === DEFAULT_QUOTE) {
         quoted = !quoted;
-      } else if (!quoted && ch === candidate) {
+      } else if (!quoted && char === candidate) {
         count += 1;
       }
     }
@@ -29,374 +44,164 @@ export function detectDelimiter(text) {
   return best;
 }
 
-export function escapeField(value, delimiter = DEFAULT_DELIMITER, quote = DEFAULT_QUOTE) {
-  if (value === null || value === undefined) return "";
-  const text = String(value);
-  const needsQuote =
-    text.includes(delimiter) ||
-    text.includes(quote) ||
-    text.includes("\n") ||
-    text.includes("\r") ||
-    /^\s|\s$/.test(text);
-  if (!needsQuote) return text;
-  return quote + text.split(quote).join(quote + quote) + quote;
-}
-
-export function stringifyCsv(rows, options = {}) {
-  const delimiter = options.delimiter ?? DEFAULT_DELIMITER;
-  const quote = options.quote ?? DEFAULT_QUOTE;
-  const newline = options.newline ?? "\n";
-  const trailingNewline = options.trailingNewline ?? true;
-  const lines = rows.map((row) =>
-    row.map((value) => escapeField(value, delimiter, quote)).join(delimiter),
-  );
-  const body = lines.join(newline);
-  return trailingNewline && body.length > 0 ? body + newline : body;
-}
-
+/**
+ * CSV を読み込んで行の配列を返す。
+ *
+ * - 引用符で囲まれた値の中の区切り文字と改行は、そのまま値の一部になる。
+ * - 値の中の引用符は 2 つ続けて書く。読み込み時に 1 つに戻す。
+ * - trim が true なら、引用符の外側の前後空白を落とす。
+ * - skipEmptyLines が true なら、空の行を飛ばす。
+ *
+ * @param {string} text
+ * @param {{delimiter?: string, quote?: string, trim?: boolean, skipEmptyLines?: boolean}} [options]
+ * @returns {string[][]}
+ */
 export function parseCsv(text, options = {}) {
-  const delimiter = options.delimiter ?? detectDelimiter(text);
+  const source = normalizeNewlines(text);
+  const delimiter = options.delimiter ?? detectDelimiter(source);
   const quote = options.quote ?? DEFAULT_QUOTE;
   const trim = options.trim ?? false;
   const skipEmptyLines = options.skipEmptyLines ?? false;
-  const source = normalizeNewlines(text);
+
   const rows = [];
   let row = [];
   let field = "";
   let inQuotes = false;
-  let lastWasNewline = true;
-  let i = 0;
+  let rowStarted = false;
+  let index = 0;
 
-  while (i < source.length) {
-    const ch = source[i];
+  const pushField = () => {
+    row.push(trim && !inQuotes ? field.trim() : field);
+    field = "";
+  };
 
-    if (inQuotes) {
-      if (ch === quote) {
-        if (source[i + 1] === quote) {
-          field += quote;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += ch;
-      }
-      i += 1;
-      continue;
-    }
-
-    if (ch === quote && field.length === 0) {
-      inQuotes = true;
-      lastWasNewline = false;
-      i += 1;
-      continue;
-    }
-
-    if (ch === delimiter) {
-      row.push(trim ? field.trim() : field);
-      field = "";
-      lastWasNewline = false;
-      i += 1;
-      continue;
-    }
-
-    if (ch === "\n") {
-      row.push(trim ? field.trim() : field);
-      field = "";
-      if (!(skipEmptyLines && row.length === 1 && row[0] === "")) {
-        rows.push(row);
-      }
-      row = [];
-      lastWasNewline = true;
-      i += 1;
-      continue;
-    }
-
-    field += ch;
-    lastWasNewline = false;
-    i += 1;
-  }
-
-  if (!lastWasNewline || row.length > 0 || field.length > 0) {
-    row.push(trim ? field.trim() : field);
-    if (!(skipEmptyLines && row.length === 1 && row[0] === "")) {
+  const pushRow = () => {
+    pushField();
+    const empty = row.length === 1 && row[0] === "";
+    if (!(skipEmptyLines && empty)) {
       rows.push(row);
     }
+    row = [];
+    rowStarted = false;
+  };
+
+  while (index < source.length) {
+    const char = source[index];
+
+    if (inQuotes) {
+      if (char === quote) {
+        inQuotes = false;
+        index += 1;
+        continue;
+      }
+      field += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === quote && field.length === 0) {
+      inQuotes = true;
+      rowStarted = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === delimiter) {
+      pushField();
+      rowStarted = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === "\n") {
+      pushRow();
+      index += 1;
+      continue;
+    }
+
+    field += char;
+    rowStarted = true;
+    index += 1;
+  }
+
+  if (rowStarted || field.length > 0 || row.length > 0) {
+    pushRow();
   }
 
   return rows;
 }
 
+/**
+ * CSV を読み込んで、ヘッダー付きのレコードにする。
+ * ヘッダーの列数より多い値は切り捨て、足りない値は空文字で埋める。
+ * @param {string} text
+ * @param {{delimiter?: string, quote?: string, trim?: boolean, skipEmptyLines?: boolean, headers?: string[]}} [options]
+ * @returns {Record<string, string>[]}
+ */
 export function parseCsvRecords(text, options = {}) {
-  const rows = parseCsv(text, options);
-  if (rows.length === 0) return [];
-  const header = options.header ?? rows[0];
-  const body = options.header ? rows : rows.slice(1);
-  const mapper = options.map ?? ((value) => value);
-  return body
-    .filter((row) => !(row.length === 1 && row[0] === ""))
-    .map((row) => {
-      const record = {};
-      header.forEach((key, index) => {
-        record[key] = mapper(row[index] ?? "", key, index);
-      });
-      return record;
-    });
-}
-
-export function stringifyRecords(records, options = {}) {
-  if (records.length === 0) return "";
-  const columns = options.columns ?? Object.keys(records[0]);
-  const includeHeader = options.header ?? true;
-  const rows = records.map((record) => columns.map((key) => record[key]));
-  if (includeHeader) rows.unshift(columns);
-  return stringifyCsv(rows, options);
-}
-
-export function splitLines(text) {
-  return normalizeNewlines(text).split("\n");
-}
-
-export function parseNumber(value, options = {}) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (value === null || value === undefined) return null;
-  let text = String(value).trim();
-  if (text === "") return null;
-  const thousands = options.thousands ?? ",";
-  const decimal = options.decimal ?? ".";
-  if (thousands) text = text.split(thousands).join("");
-  if (decimal !== ".") text = text.split(decimal).join(".");
-  text = text.replace(/\s/g, "");
-  const negative = /^\(.*\)$/.test(text);
-  if (negative) text = text.slice(1, -1);
-  const match = text.match(/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/);
-  if (!match) return null;
-  const number = Number(text);
-  if (!Number.isFinite(number)) return null;
-  return negative ? -number : number;
-}
-
-export function formatNumber(value, options = {}) {
-  const number = typeof value === "number" ? value : parseNumber(value);
-  if (number === null) return "";
-  const decimals = options.decimals ?? 0;
-  const thousands = options.thousands ?? ",";
-  const fixed = number.toFixed(decimals);
-  const [integer, fraction] = fixed.split(".");
-  const sign = integer.startsWith("-") ? "-" : "";
-  const digits = sign ? integer.slice(1) : integer;
-  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, thousands);
-  return fraction === undefined ? sign + grouped : sign + grouped + "." + fraction;
-}
-
-export function parseBool(value, options = {}) {
-  if (typeof value === "boolean") return value;
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim().toLowerCase();
-  const truthy = options.truthy ?? ["true", "1", "yes", "y", "on"];
-  const falsy = options.falsy ?? ["false", "0", "no", "n", "off"];
-  if (truthy.includes(text)) return true;
-  if (falsy.includes(text)) return false;
-  return null;
-}
-
-export function formatBool(value, options = {}) {
-  const trueText = options.trueText ?? "true";
-  const falseText = options.falseText ?? "false";
-  return value ? trueText : falseText;
-}
-
-export function parseDateValue(value, options = {}) {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  if (typeof value === "number") {
-    const fromNumber = new Date(value);
-    return Number.isNaN(fromNumber.getTime()) ? null : fromNumber;
+  const rows = parseCsv(text, { skipEmptyLines: true, ...options });
+  if (rows.length === 0) {
+    return [];
   }
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  if (text === "") return null;
-  const formats = options.formats ?? ["iso", "slash-ymd", "slash-mdy", "dot-ymd"];
-  for (const format of formats) {
-    const parsed = parseDateWithFormat(text, format);
-    if (parsed) return parsed;
-  }
-  return null;
-}
-
-function parseDateWithFormat(text, format) {
-  let match;
-  if (format === "iso") {
-    match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
-    if (!match) return null;
-    return buildDate(match[1], match[2], match[3], match[4], match[5], match[6]);
-  }
-  if (format === "slash-ymd") {
-    match = text.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
-    if (!match) return null;
-    return buildDate(match[1], match[2], match[3]);
-  }
-  if (format === "slash-mdy") {
-    match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (!match) return null;
-    return buildDate(match[3], match[1], match[2]);
-  }
-  if (format === "dot-ymd") {
-    match = text.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
-    if (!match) return null;
-    return buildDate(match[1], match[2], match[3]);
-  }
-  return null;
-}
-
-function buildDate(year, month, day, hour = "0", minute = "0", second = "0") {
-  const y = Number(year);
-  const m = Number(month);
-  const d = Number(day);
-  const h = Number(hour);
-  const min = Number(minute);
-  const s = Number(second);
-  const date = new Date(Date.UTC(y, m - 1, d, h, min, s));
-  if (
-    date.getUTCFullYear() !== y ||
-    date.getUTCMonth() !== m - 1 ||
-    date.getUTCDate() !== d
-  ) {
-    return null;
-  }
-  return date;
-}
-
-export function formatDate(date, pattern = "YYYY-MM-DD") {
-  const value = parseDateValue(date);
-  if (!value) return "";
-  const parts = {
-    YYYY: String(value.getUTCFullYear()).padStart(4, "0"),
-    MM: String(value.getUTCMonth() + 1).padStart(2, "0"),
-    DD: String(value.getUTCDate()).padStart(2, "0"),
-    HH: String(value.getUTCHours()).padStart(2, "0"),
-    mm: String(value.getUTCMinutes()).padStart(2, "0"),
-    ss: String(value.getUTCSeconds()).padStart(2, "0"),
-  };
-  return pattern.replace(/YYYY|MM|DD|HH|mm|ss/g, (token) => parts[token]);
-}
-
-export function isDateString(value) {
-  return parseDateValue(value) !== null;
-}
-
-export function columnValues(records, key) {
-  return records.map((record) => record[key]);
-}
-
-export function selectColumns(records, keys) {
-  return records.map((record) => {
-    const selected = {};
-    for (const key of keys) selected[key] = record[key];
-    return selected;
-  });
-}
-
-export function renameColumns(records, mapping) {
-  return records.map((record) => {
-    const renamed = {};
-    for (const [key, value] of Object.entries(record)) {
-      renamed[mapping[key] ?? key] = value;
+  const headers = options.headers ?? rows[0];
+  const body = options.headers ? rows : rows.slice(1);
+  return body.map((row) => {
+    const record = {};
+    for (let index = 0; index < headers.length; index += 1) {
+      record[headers[index]] = row[index] ?? "";
     }
-    return renamed;
+    return record;
   });
 }
 
-export function filterRows(records, predicate) {
-  return records.filter(predicate);
+/**
+ * 方言 ID を指定して読み込む。
+ * @param {string} text
+ * @param {string} dialectId
+ * @returns {string[][]}
+ */
+export function parseWithDialect(text, dialectId) {
+  return parseCsv(text, readOptionsOf(dialectId));
 }
 
-export function sortRecords(records, key, direction = "asc") {
-  const factor = direction === "desc" ? -1 : 1;
-  return [...records].sort((a, b) => {
-    const left = a[key];
-    const right = b[key];
-    if (left === right) return 0;
-    if (left === null || left === undefined) return 1;
-    if (right === null || right === undefined) return -1;
-    if (typeof left === "number" && typeof right === "number") {
-      return (left - right) * factor;
-    }
-    return String(left).localeCompare(String(right), "ja") * factor;
-  });
+/**
+ * 方言 ID を指定して書き出す。
+ * @param {string[][]} rows
+ * @param {string} dialectId
+ * @returns {string}
+ */
+export function stringifyWithDialect(rows, dialectId) {
+  return stringifyCsv(rows, writeOptionsOf(dialectId));
 }
 
-export function chunk(rows, size) {
-  if (!Number.isInteger(size) || size <= 0) {
-    throw new RangeError("size must be a positive integer");
-  }
-  const result = [];
-  for (let i = 0; i < rows.length; i += size) {
-    result.push(rows.slice(i, i + size));
-  }
-  return result;
+/**
+ * 読み込んだ行のうち、指定した列だけを取り出す。
+ * @param {string[][]} rows
+ * @param {number[]} indexes
+ * @returns {string[][]}
+ */
+export function pickColumns(rows, indexes) {
+  return rows.map((row) => indexes.map((index) => row[index] ?? ""));
 }
 
-export function unique(values) {
-  return [...new Set(values)];
+/**
+ * 指定した列を除いた行を返す。
+ * @param {string[][]} rows
+ * @param {number[]} indexes
+ * @returns {string[][]}
+ */
+export function dropColumns(rows, indexes) {
+  const drop = new Set(indexes);
+  return rows.map((row) => row.filter((_, index) => !drop.has(index)));
 }
 
-export function toJson(records, space = 0) {
-  return JSON.stringify(records, null, space);
-}
-
-export function fromJson(text) {
-  const parsed = JSON.parse(text);
-  if (!Array.isArray(parsed)) throw new TypeError("expected an array");
-  return parsed;
-}
-
-export function inferSchema(records) {
-  const schema = {};
-  for (const record of records) {
-    for (const [key, value] of Object.entries(record)) {
-      if (schema[key]) continue;
-      if (value === null || value === undefined || value === "") {
-        schema[key] = "string";
-      } else if (typeof value === "boolean" || parseBool(value) !== null) {
-        schema[key] = "boolean";
-      } else if (parseNumber(value) !== null) {
-        schema[key] = "number";
-      } else if (isDateString(value)) {
-        schema[key] = "date";
-      } else {
-        schema[key] = "string";
-      }
-    }
-  }
-  return schema;
-}
-
-export function convertRecord(record, schema) {
-  const converted = {};
-  for (const [key, value] of Object.entries(record)) {
-    const type = schema[key] ?? "string";
-    if (type === "number") converted[key] = parseNumber(value);
-    else if (type === "boolean") converted[key] = parseBool(value);
-    else if (type === "date") converted[key] = parseDateValue(value);
-    else converted[key] = value === null || value === undefined ? "" : String(value);
-  }
-  return converted;
-}
-
-export function convertRecords(records, schema) {
-  return records.map((record) => convertRecord(record, schema));
-}
-
-export function mergeRecords(base, extra, key) {
-  const index = new Map(extra.map((record) => [record[key], record]));
-  return base.map((record) => {
-    const other = index.get(record[key]);
-    return other ? { ...record, ...other } : { ...record };
-  });
-}
-
+/**
+ * 行を列に、列を行に変換する。短い行は空文字で埋める。
+ * @param {string[][]} rows
+ * @returns {string[][]}
+ */
 export function transpose(rows) {
-  if (rows.length === 0) return [];
-  const width = Math.max(...rows.map((row) => row.length));
+  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
   const result = [];
   for (let column = 0; column < width; column += 1) {
     result.push(rows.map((row) => row[column] ?? ""));
@@ -404,49 +209,161 @@ export function transpose(rows) {
   return result;
 }
 
-export function summarizeColumns(records) {
-  const summary = {};
-  for (const key of Object.keys(records[0] ?? {})) {
-    const values = columnValues(records, key)
-      .filter((value) => value !== "" && value !== null && value !== undefined);
-    const numbers = values.map((value) => parseNumber(value)).filter((n) => n !== null);
-    summary[key] = {
-      count: values.length,
-      distinct: unique(values).length,
-      numeric: numbers.length === values.length && numbers.length > 0,
-      min: numbers.length > 0 ? Math.min(...numbers) : null,
-      max: numbers.length > 0 ? Math.max(...numbers) : null,
-      sum: numbers.reduce((total, number) => total + number, 0),
-    };
+/**
+ * 行数を返す。空行は数えない。
+ * @param {string[][]} rows
+ * @returns {number}
+ */
+export function countRows(rows) {
+  return rows.filter((row) => row.some((value) => value !== "")).length;
+}
+
+/**
+ * 行の最大列数を返す。
+ * @param {string[][]} rows
+ * @returns {number}
+ */
+export function columnCount(rows) {
+  return rows.reduce((max, row) => Math.max(max, row.length), 0);
+}
+
+/**
+ * すべての行が同じ列数かを返す。
+ * @param {string[][]} rows
+ * @returns {boolean}
+ */
+export function isRectangular(rows) {
+  if (rows.length === 0) {
+    return true;
   }
-  return summary;
+  const width = rows[0].length;
+  return rows.every((row) => row.length === width);
 }
 
-export function groupRecords(records, keyFn) {
-  const groups = new Map();
-  for (const record of records) {
-    const key = typeof keyFn === "function" ? keyFn(record) : record[keyFn];
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(record);
+/**
+ * 列名の一覧を返す。重複した名前には連番を付ける。
+ * @param {string[]} headers
+ * @returns {string[]}
+ */
+export function uniqueHeaders(headers) {
+  const seen = new Map();
+  return headers.map((header, index) => {
+    const base = header === "" ? `column${index + 1}` : header;
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base}_${count + 1}`;
+  });
+}
+
+/**
+ * ヘッダー行を除いた行を返す。
+ * @param {string[][]} rows
+ * @returns {string[][]}
+ */
+export function withoutHeader(rows) {
+  return rows.slice(1);
+}
+
+/**
+ * 指定した列の値だけを返す。
+ * @param {string[][]} rows
+ * @param {number} index
+ * @param {{skipHeader?: boolean}} [options]
+ * @returns {string[]}
+ */
+export function columnValues(rows, index, options = {}) {
+  const body = options.skipHeader ? rows.slice(1) : rows;
+  return body.map((row) => row[index] ?? "");
+}
+
+/**
+ * 空の行を除いた配列を返す。
+ * @param {string[][]} rows
+ * @returns {string[][]}
+ */
+export function removeEmptyRows(rows) {
+  return rows.filter((row) => row.some((value) => value !== ""));
+}
+
+/**
+ * 行の値をまとめて trim する。
+ * @param {string[][]} rows
+ * @returns {string[][]}
+ */
+export function trimRows(rows) {
+  return rows.map((row) => row.map((value) => String(value).trim()));
+}
+
+/**
+ * 2 つの行の配列が同じ内容かを返す。
+ * @param {string[][]} left
+ * @param {string[][]} right
+ * @returns {boolean}
+ */
+export function sameRows(left, right) {
+  if (left.length !== right.length) {
+    return false;
   }
-  return groups;
+  return left.every((row, index) => {
+    const other = right[index];
+    return row.length === other.length && row.every((value, column) => value === other[column]);
+  });
 }
 
-export function countBy(records, keyFn) {
-  const counts = {};
-  for (const record of records) {
-    const key = typeof keyFn === "function" ? keyFn(record) : record[keyFn];
-    counts[key] = (counts[key] ?? 0) + 1;
+/**
+ * 行の配列を、先頭行をキーにしたオブジェクトの配列にする。
+ * @param {string[][]} rows
+ * @returns {Record<string, string>[]}
+ */
+export function rowsToRecords(rows) {
+  if (rows.length === 0) {
+    return [];
   }
-  return counts;
+  const headers = uniqueHeaders(rows[0]);
+  return rows.slice(1).map((row) => {
+    const record = {};
+    for (let index = 0; index < headers.length; index += 1) {
+      record[headers[index]] = row[index] ?? "";
+    }
+    return record;
+  });
 }
 
-export function pluck(records, key, fallback = "") {
-  return records.map((record) => (record[key] === undefined ? fallback : record[key]));
+/**
+ * レコードの配列を、ヘッダー付きの行の配列にする。
+ * @param {Record<string, string>[]} records
+ * @param {string[]} [headers]
+ * @returns {string[][]}
+ */
+export function recordsToRows(records, headers) {
+  const columns = headers ?? [...new Set(records.flatMap((record) => Object.keys(record)))];
+  return [columns, ...records.map((record) => columns.map((column) => record[column] ?? ""))];
 }
 
-export function compact(records) {
-  return records.filter((record) =>
-    Object.values(record).some((value) => value !== "" && value !== null && value !== undefined),
-  );
+/**
+ * CSV の文字列から、指定した列名の値だけを取り出す。
+ * @param {string} text
+ * @param {string} name
+ * @returns {string[]}
+ */
+export function valuesOfColumn(text, name) {
+  const records = parseCsvRecords(text);
+  return records.map((record) => record[name] ?? "");
+}
+
+/**
+ * 方言 ID の一覧を返す。
+ * @returns {string[]}
+ */
+export function dialectIds() {
+  return Object.keys(DIALECTS).sort();
+}
+
+/**
+ * 方言 ID から定義を返す。
+ * @param {string} id
+ * @returns {object}
+ */
+export function dialectOf(id) {
+  return getDialect(id);
 }

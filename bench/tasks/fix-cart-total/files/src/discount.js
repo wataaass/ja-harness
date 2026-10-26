@@ -1,161 +1,200 @@
-export const COUPONS = {
-  SAVE10: { type: "percentage", rate: 0.1, label: "10%オフ" },
-  SAVE20: { type: "percentage", rate: 0.2, label: "20%オフ" },
-  MINUS500: { type: "fixed", amount: 500, label: "500円引き" },
-  FREESHIP: { type: "shipping", label: "送料無料" },
+import { allocate } from "./money.js";
+
+const COUPONS = {
+  SAVE10: { kind: "percentage", value: 0.1 },
+  SAVE20: { kind: "percentage", value: 0.2 },
+  MINUS500: { kind: "fixed", value: 500 },
+  SHIP500: { kind: "fixed", value: 500 },
 };
 
-export function roundYen(value) {
-  return Math.round(Number(value));
+/**
+ * 割引の適用結果。
+ * @typedef {{applied: {label: string, amount: number}[], discountTotal: number, discountedSubtotal: number}} DiscountResult
+ */
+
+/**
+ * 百分率の割引を作る。
+ * @param {number} rate 0〜1
+ * @returns {{type: "percentage", value: number}}
+ */
+export function percentage(rate) {
+  const value = Number(rate);
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new RangeError("percentage must be between 0 and 1");
+  }
+  return { type: "percentage", value };
 }
 
-export function normalizeRate(rate) {
-  if (typeof rate !== "number" || Number.isNaN(rate)) {
-    throw new TypeError("rate must be a number");
+/**
+ * 固定額の割引を作る。
+ * @param {number} amount
+ * @returns {{type: "fixed", value: number}}
+ */
+export function fixed(amount) {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError("fixed amount must be non-negative");
   }
-  if (rate < 0 || rate > 1) {
-    throw new RangeError("rate must be between 0 and 1");
-  }
-  return rate;
+  return { type: "fixed", value };
 }
 
-export function describeDiscount(discount) {
-  if (!discount || typeof discount !== "object") return "";
-  if (discount.label) return discount.label;
-  if (discount.type === "percentage") return `${Math.round(discount.rate * 100)}%オフ`;
-  if (discount.type === "fixed") return `${roundYen(discount.amount)}円引き`;
-  if (discount.type === "threshold") {
-    return `${roundYen(discount.threshold)}円以上で${roundYen(discount.amount)}円引き`;
+/**
+ * しきい値つきの固定額割引を作る。小計がしきい値「以上」で適用する。
+ * @param {number} thresholdAmount
+ * @param {number} amount
+ * @returns {{type: "threshold", threshold: number, value: number}}
+ */
+export function threshold(thresholdAmount, amount) {
+  const limit = Number(thresholdAmount);
+  const value = Number(amount);
+  if (!Number.isFinite(limit) || limit < 0) {
+    throw new RangeError("threshold must be non-negative");
   }
-  if (discount.type === "coupon") return COUPONS[discount.code]?.label ?? discount.code;
-  if (discount.type === "shipping") return "送料無料";
-  return "";
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError("amount must be non-negative");
+  }
+  return { type: "threshold", threshold: limit, value };
 }
 
-export function validateDiscount(discount) {
+/**
+ * クーポンコードから割引を作る。
+ * @param {string} code
+ * @returns {{type: "percentage"|"fixed", value: number, code: string}}
+ */
+export function coupon(code) {
+  const key = String(code).toUpperCase();
+  const definition = COUPONS[key];
+  if (!definition) {
+    throw new RangeError(`unknown coupon: ${code}`);
+  }
+  return { type: definition.kind, value: definition.value, code: key };
+}
+
+/**
+ * 割引額を求める。割引額の端数は四捨五入する。
+ * @param {number} subtotal
+ * @param {{type: string, value?: number, threshold?: number}} discount
+ * @returns {number}
+ */
+export function discountAmount(subtotal, discount) {
+  const base = Number(subtotal);
+  if (!Number.isFinite(base) || base < 0) {
+    throw new RangeError("subtotal must be a non-negative number");
+  }
   if (!discount || typeof discount !== "object") {
     throw new TypeError("discount must be an object");
   }
   if (discount.type === "percentage") {
-    normalizeRate(discount.rate);
-    return true;
+    return Math.round(base * Number(discount.value));
   }
   if (discount.type === "fixed") {
-    if (!(discount.amount >= 0)) throw new RangeError("amount must be positive");
-    return true;
+    return Math.min(base, Math.round(Number(discount.value)));
   }
   if (discount.type === "threshold") {
-    if (!(discount.threshold >= 0)) throw new RangeError("threshold must be positive");
-    if (!(discount.amount >= 0)) throw new RangeError("amount must be positive");
-    return true;
+    return base >= Number(discount.threshold)
+      ? Math.min(base, Math.round(Number(discount.value)))
+      : 0;
   }
-  if (discount.type === "coupon") {
-    if (!COUPONS[discount.code]) throw new RangeError(`unknown coupon: ${discount.code}`);
-    return true;
-  }
-  if (discount.type === "shipping") return true;
   throw new RangeError(`unknown discount type: ${discount.type}`);
 }
 
-export function resolveCoupon(discount) {
-  if (discount.type !== "coupon") return discount;
-  const coupon = COUPONS[discount.code];
-  if (!coupon) throw new RangeError(`unknown coupon: ${discount.code}`);
-  return { ...coupon, code: discount.code };
-}
-
-export function discountAmount(base, discount) {
-  const amountBase = Math.max(0, Number(base));
-  if (!discount) return 0;
-  const resolved = resolveCoupon(discount);
-  if (resolved.type === "percentage") {
-    return Math.min(amountBase, roundYen(amountBase * normalizeRate(resolved.rate)));
-  }
-  if (resolved.type === "fixed") {
-    return Math.min(amountBase, roundYen(resolved.amount));
-  }
-  if (resolved.type === "threshold") {
-    if (amountBase < resolved.threshold) return 0;
-    return Math.min(amountBase, roundYen(resolved.amount));
-  }
-  if (resolved.type === "shipping") return 0;
-  return 0;
-}
-
+/**
+ * 割引を順番に適用する。それぞれの割引は、その時点の残額に対して計算する。
+ * 割引の合計は小計を超えない。
+ * @param {number} subtotal
+ * @param {object[]} [discounts]
+ * @returns {DiscountResult}
+ */
 export function applyDiscounts(subtotal, discounts = []) {
-  let remaining = Math.max(0, Number(subtotal));
+  const original = Number(subtotal);
+  if (!Number.isFinite(original) || original < 0) {
+    throw new RangeError("subtotal must be a non-negative number");
+  }
+  let remaining = original;
   let discountTotal = 0;
   const applied = [];
   for (const discount of discounts) {
-    if (!discount) continue;
-    const amount = discountAmount(remaining, discount);
-    if (amount <= 0) continue;
+    const amount = Math.min(remaining, discountAmount(remaining, discount));
+    if (amount <= 0) {
+      continue;
+    }
     remaining -= amount;
     discountTotal += amount;
-    applied.push({
-      ...resolveCoupon(discount),
-      amount,
-      label: describeDiscount(discount),
-    });
+    applied.push({ label: describeDiscount(discount), amount });
   }
   return {
-    subtotal: Math.max(0, Number(subtotal)),
-    discountTotal,
-    discountedSubtotal: remaining,
     applied,
+    discountTotal,
+    discountedSubtotal: original - discountTotal,
   };
 }
 
-export function bestSingleDiscount(subtotal, discounts = []) {
-  return discounts.reduce(
-    (best, discount) => {
-      const amount = discountAmount(subtotal, discount);
-      if (amount > best.amount) {
-        return { discount, amount, label: describeDiscount(discount) };
-      }
-      return best;
-    },
-    { discount: null, amount: 0, label: "" },
-  );
+/**
+ * 割引の説明文を作る。
+ * @param {{type: string, value?: number, threshold?: number, code?: string}} discount
+ * @returns {string}
+ */
+export function describeDiscount(discount) {
+  if (discount.type === "percentage") {
+    return `${Number(discount.value) * 100}%オフ`;
+  }
+  if (discount.type === "fixed") {
+    return `${Number(discount.value)}円引き`;
+  }
+  if (discount.type === "threshold") {
+    return `${Number(discount.threshold)}円以上で${Number(discount.value)}円引き`;
+  }
+  if (discount.type === "coupon") {
+    return COUPONS[discount.code] ? describeDiscount(coupon(discount.code)) : "クーポン";
+  }
+  return "割引";
 }
 
-export function totalDiscountAmount(subtotal, discounts = []) {
+/**
+ * 割引額を明細の金額比で配分する。
+ * 合計は必ず discountTotal と一致し、端数は money.allocate の規則で配る。
+ * @param {number} discountTotal
+ * @param {number[]} lineTotals
+ * @returns {number[]}
+ */
+export function allocateDiscount(discountTotal, lineTotals) {
+  return allocate(discountTotal, lineTotals);
+}
+
+/**
+ * 割引の一覧から、適用可能なものだけを返す。
+ * @param {number} subtotal
+ * @param {object[]} discounts
+ * @returns {object[]}
+ */
+export function eligibleDiscounts(subtotal, discounts) {
+  return discounts.filter((discount) => discountAmount(Number(subtotal), discount) > 0);
+}
+
+/**
+ * 割引の合計額を返す。
+ * @param {number} subtotal
+ * @param {object[]} discounts
+ * @returns {number}
+ */
+export function totalDiscount(subtotal, discounts = []) {
   return applyDiscounts(subtotal, discounts).discountTotal;
 }
 
-export function couponFromCode(code) {
-  const normalized = String(code ?? "").trim().toUpperCase();
-  if (!COUPONS[normalized]) return null;
-  return { type: "coupon", code: normalized };
+/**
+ * 割引後の金額を返す。
+ * @param {number} subtotal
+ * @param {object[]} discounts
+ * @returns {number}
+ */
+export function discountedSubtotal(subtotal, discounts = []) {
+  return applyDiscounts(subtotal, discounts).discountedSubtotal;
 }
 
-export function filterUsableDiscounts(subtotal, discounts = []) {
-  return discounts.filter((discount) => discountAmount(subtotal, discount) > 0);
-}
-
-export function combineDiscounts(...groups) {
-  return groups.flat().filter(Boolean);
-}
-
-export function percentage(rate, label) {
-  return { type: "percentage", rate: normalizeRate(rate), label };
-}
-
-export function fixed(amount, label) {
-  return { type: "fixed", amount: roundYen(amount), label };
-}
-
-export function threshold(thresholdAmount, amount, label) {
-  return {
-    type: "threshold",
-    threshold: roundYen(thresholdAmount),
-    amount: roundYen(amount),
-    label,
-  };
-}
-
-export function coupon(code) {
-  const discount = couponFromCode(code);
-  if (!discount) throw new RangeError(`unknown coupon: ${code}`);
-  return discount;
+/**
+ * 定義済みのクーポンコードを返す。
+ * @returns {string[]}
+ */
+export function couponCodes() {
+  return Object.keys(COUPONS).sort();
 }

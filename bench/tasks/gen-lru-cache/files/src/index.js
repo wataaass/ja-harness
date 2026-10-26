@@ -409,3 +409,6 @@ export function retry(fn, options = {}) {
     run();
   });
 }
+
+export { LRUCache } from "./cache.js";
+

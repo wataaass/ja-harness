@@ -1,129 +1,146 @@
-export function pad(value, width = 2) {
-  return String(value).padStart(width, "0");
+import { formatCurrency } from "./currencies.js";
+
+/**
+ * 円の金額を表示用に整形する。端数は四捨五入する。
+ * @param {number} amount
+ * @returns {string}
+ */
+export function formatYen(amount) {
+  return formatCurrency(Math.round(Number(amount)), "JPY");
 }
 
-export function groupDigits(value) {
-  const text = String(Math.abs(Number(value)));
-  return text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+/**
+ * 数値を 3 桁区切りにする。
+ * @param {number} value
+ * @returns {string}
+ */
+export function formatNumber(value) {
+  return Number(value).toLocaleString("ja-JP");
 }
 
-export function formatYen(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "¥0";
-  const rounded = Math.round(number);
-  const sign = rounded < 0 ? "-" : "";
-  return `${sign}¥${groupDigits(rounded)}`;
+/**
+ * 割引の行を整形する。
+ * @param {{label: string, amount: number}} applied
+ * @returns {string}
+ */
+export function formatDiscountLine(applied) {
+  return `${applied.label}: -${formatYen(applied.amount)}`;
 }
 
-export function formatNumber(value, decimals = 0) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "0";
-  return number.toFixed(decimals);
-}
-
-export function formatPercent(rate, decimals = 0) {
-  return `${(Number(rate) * 100).toFixed(decimals)}%`;
-}
-
-export function formatQuantity(value) {
-  return `${Number(value)}点`;
-}
-
-export function formatDiscount(amount) {
-  return `-${formatYen(amount)}`;
-}
-
-export function formatTax(amount, rate) {
-  return `${formatYen(amount)} (${formatPercent(rate)})`;
-}
-
-export function formatItem(item) {
-  const name = item.name ?? item.sku ?? "商品";
-  return `${name} x${item.quantity} ${formatYen(item.unitPrice * item.quantity)}`;
-}
-
-export function formatDiscountLine(label, amount) {
-  return `${label}: ${formatDiscount(amount)}`;
-}
-
-export function formatSummary(summary) {
-  return [
-    `小計 ${formatYen(summary.subtotal)}`,
-    `割引 ${formatDiscount(summary.discountTotal)}`,
-    `税 ${formatYen(summary.tax)}`,
-    `合計 ${formatYen(summary.total)}`,
-  ].join("\n");
-}
-
-export function formatReceipt(summary, options = {}) {
-  const lines = [];
-  if (options.title) lines.push(options.title);
-  for (const item of summary.items ?? []) lines.push(formatItem(item));
-  if ((summary.items ?? []).length > 0) lines.push("---");
-  lines.push(`小計 ${formatYen(summary.subtotal)}`);
-  for (const discount of summary.applied ?? []) {
-    lines.push(formatDiscountLine(discount.label, discount.amount));
+/**
+ * カートのまとめを短い文字列にする。
+ * @param {{subtotal: number, discountTotal: number, tax: number, total: number}} summary
+ * @returns {string}
+ */
+export function formatCartSummary(summary) {
+  const lines = [`小計 ${formatYen(summary.subtotal)}`];
+  if (summary.discountTotal > 0) {
+    lines.push(`割引 -${formatYen(summary.discountTotal)}`);
   }
   lines.push(`税 ${formatYen(summary.tax)}`);
+  if (summary.shipping > 0) {
+    lines.push(`送料 ${formatYen(summary.shipping)}`);
+  }
   lines.push(`合計 ${formatYen(summary.total)}`);
   return lines.join("\n");
 }
 
-export function formatCartSummary(summary) {
-  return `${summary.lineCount}品 ${formatYen(summary.total)} (税 ${formatYen(summary.tax)})`;
+/**
+ * レシートを整形する。
+ * @param {{items: object[], applied: object[], subtotal: number, discountTotal: number, tax: number, shipping: number, total: number}} summary
+ * @param {{title?: string, showShipping?: boolean}} [options]
+ * @returns {string}
+ */
+export function formatReceipt(summary, options = {}) {
+  const lines = [];
+  if (options.title) {
+    lines.push(options.title);
+  }
+  for (const item of summary.items) {
+    lines.push(`${item.name ?? item.sku} x${item.quantity} ${formatYen(item.unitPrice * item.quantity)}`);
+  }
+  lines.push("---");
+  lines.push(`小計 ${formatYen(summary.subtotal)}`);
+  for (const applied of summary.applied) {
+    lines.push(formatDiscountLine(applied));
+  }
+  lines.push(`税 ${formatYen(summary.tax)}`);
+  if (options.showShipping !== false && summary.shipping > 0) {
+    lines.push(`送料 ${formatYen(summary.shipping)}`);
+  }
+  lines.push(`合計 ${formatYen(summary.total)}`);
+  return lines.join("\n");
 }
 
-export function formatTable(rows, columns) {
-  const widths = columns.map((column) =>
-    Math.max(
-      column.label.length,
-      ...rows.map((row) => String(row[column.key] ?? "").length),
-    ),
-  );
-  const header = columns.map((column, i) => String(column.label).padEnd(widths[i])).join(" | ");
-  const divider = widths.map((width) => "-".repeat(width)).join("-+-");
-  const body = rows.map((row) =>
-    columns.map((column, i) => String(row[column.key] ?? "").padEnd(widths[i])).join(" | "),
-  );
-  return [header, divider, ...body].join("\n");
+/**
+ * 明細の 1 行を整形する。
+ * @param {{name?: string, sku: string, quantity: number, unitPrice: number}} item
+ * @returns {string}
+ */
+export function formatLine(item) {
+  return `${item.name ?? item.sku}\t${item.quantity}\t${formatYen(item.unitPrice)}\t${formatYen(item.unitPrice * item.quantity)}`;
 }
 
-export function truncate(text, length) {
-  const value = String(text);
-  if (value.length <= length) return value;
-  if (length <= 1) return value.slice(0, length);
-  return value.slice(0, length - 1) + "…";
+/**
+ * カートの明細を表形式にする。
+ * @param {object[]} items
+ * @returns {string}
+ */
+export function formatItemsTable(items) {
+  const header = ["商品", "数量", "単価", "金額"].join("\t");
+  return [header, ...items.map((item) => formatLine(item))].join("\n");
 }
 
-export function alignRight(text, width) {
-  return String(text).padStart(width);
+/**
+ * 割引の説明をまとめる。
+ * @param {object[]} applied
+ * @returns {string}
+ */
+export function formatAppliedDiscounts(applied) {
+  if (applied.length === 0) {
+    return "割引なし";
+  }
+  return applied.map((entry) => formatDiscountLine(entry)).join("\n");
 }
 
-export function alignLeft(text, width) {
-  return String(text).padEnd(width);
+/**
+ * まとめの数値を、画面用の短いオブジェクトにする。
+ * @param {object} summary
+ * @returns {{subtotal: string, discount: string, tax: string, shipping: string, total: string}}
+ */
+export function formatSummaryFields(summary) {
+  return {
+    subtotal: formatYen(summary.subtotal),
+    discount: formatYen(summary.discountTotal),
+    tax: formatYen(summary.tax),
+    shipping: formatYen(summary.shipping),
+    total: formatYen(summary.total),
+  };
 }
 
-export function formatDate(date) {
-  const value = date instanceof Date ? date : new Date(date);
-  return `${value.getFullYear()}/${pad(value.getMonth() + 1)}/${pad(value.getDate())}`;
+/**
+ * 金額を「約」つきで整形する。
+ * @param {number} amount
+ * @returns {string}
+ */
+export function formatApprox(amount) {
+  return `約${formatYen(amount)}`;
 }
 
-export function formatDateTime(date) {
-  const value = date instanceof Date ? date : new Date(date);
-  return `${formatDate(value)} ${pad(value.getHours())}:${pad(value.getMinutes())}`;
+/**
+ * 割合を表示用にする。
+ * @param {number} rate
+ * @returns {string}
+ */
+export function formatPercent(rate) {
+  return `${Number(rate) * 100}%`;
 }
 
-export function formatAddress(address) {
-  if (!address) return "";
-  const parts = [address.postalCode, address.prefecture, address.city, address.street].filter(
-    Boolean,
-  );
-  return parts.join(" ");
-}
-
-export function formatPhone(value) {
-  const digits = String(value).replace(/\D/g, "");
-  if (digits.length === 11) return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
-  if (digits.length === 10) return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`;
-  return String(value);
+/**
+ * 数量を「点」つきで整形する。
+ * @param {number} count
+ * @returns {string}
+ */
+export function formatCount(count) {
+  return `${Number(count)}点`;
 }

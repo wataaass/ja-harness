@@ -1,314 +1,257 @@
-const MONTHS = {
-  Jan: 0,
-  Feb: 1,
-  Mar: 2,
-  Apr: 3,
-  May: 4,
-  Jun: 5,
-  Jul: 6,
-  Aug: 7,
-  Sep: 8,
-  Oct: 9,
-  Nov: 10,
-  Dec: 11,
-};
+import { parseLine as parseOneLine } from "./pattern.js";
 
-const LINE_PATTERN =
-  /^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d{3}|-)\s+(\d+|-)\s+"([^"]*)"\s+"([^"]*)"$/;
+export { parseLine } from "./pattern.js";
+export {
+  countBy,
+  countByDay,
+  countByHour,
+  countByIp,
+  countByMethod,
+  countByPath,
+  countByStatus,
+  countByStatusClass,
+  errorCount,
+  errorRate,
+  errorsByDay,
+  filterByDay,
+  filterByMethod,
+  filterByPathPrefix,
+  filterByStatus,
+  filterByStatusClass,
+  hourlyErrorRate,
+  isClientError,
+  isErrorStatus,
+  isServerError,
+  percent,
+  statusClass,
+  summarize,
+  topCounts,
+  uniqueIps,
+} from "./stats.js";
+export { formatTimestamp, localDateKey, parseISOTimestamp, parseTimestamp } from "./timestamp.js";
 
-function extractIp(line) {
-  const match = line.match(/^(\d{1,3}(?:\.\d{1,3}){3})\s/);
-  return match ? match[1] : null;
-}
-
-export function parseTimestamp(value) {
-  const match = String(value).match(
-    /^(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})\s+([+-])(\d{2})(\d{2})$/,
-  );
-  if (!match) return null;
-  const [, day, monthName, year, hour, minute, second, sign, offsetHour, offsetMinute] = match;
-  const month = MONTHS[monthName];
-  if (month === undefined) return null;
-  const offset = (Number(offsetHour) * 60 + Number(offsetMinute)) * (sign === "-" ? -1 : 1);
-  const utc = Date.UTC(
-    Number(year),
-    month,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second),
-  );
-  return new Date(utc - offset * 60 * 1000);
-}
-
-export function parseLine(line) {
-  if (typeof line !== "string") return null;
-  const trimmed = line.trim();
-  if (trimmed === "") return null;
-  const ip = extractIp(trimmed);
-  if (!ip) return null;
-  const match = trimmed.match(LINE_PATTERN);
-  if (!match) return null;
-  const [, , user, , timestamp, request, status, bytes, referer, userAgent] = match;
-  const parts = request.split(" ");
-  const method = parts.length > 0 && parts[0] !== "" ? parts[0] : "";
-  const path = parts.length > 1 ? parts[1] : "";
-  const protocol = parts.length > 2 ? parts.slice(2).join(" ") : "";
-  return {
-    ip,
-    user: user === "-" ? null : user,
-    timestamp: parseTimestamp(timestamp),
-    rawTimestamp: timestamp,
-    request,
-    method,
-    path,
-    protocol,
-    status: status === "-" ? null : Number(status),
-    bytes: bytes === "-" ? 0 : Number(bytes),
-    referer: referer === "-" ? null : referer,
-    userAgent,
-  };
-}
-
-export function parseLog(text) {
-  if (typeof text !== "string") return [];
-  return text
+/**
+ * ログの文字列を行に分ける。空行は落とす。
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function splitLines(text) {
+  return String(text ?? "")
     .split(/\r?\n/)
-    .map((line) => parseLine(line))
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim() !== "");
+}
+
+/**
+ * ログの文字列を読み取る。読めない行は飛ばす。
+ * @param {string} text
+ * @returns {object[]}
+ */
+export function parseLog(text) {
+  return splitLines(text)
+    .map((line) => parseOneLine(line))
     .filter((entry) => entry !== null);
 }
 
-export function isClientError(entry) {
-  return entry.status !== null && entry.status >= 400 && entry.status < 500;
-}
-
-export function isServerError(entry) {
-  return entry.status !== null && entry.status >= 500;
-}
-
-export function isError(entry) {
-  return isClientError(entry) || isServerError(entry);
-}
-
-export function statusClass(status) {
-  if (status === null) return "unknown";
-  return `${Math.floor(status / 100)}xx`;
-}
-
-export function countBy(items, keyFn) {
-  const counts = {};
-  for (const item of items) {
-    const key = typeof keyFn === "function" ? keyFn(item) : item[keyFn];
-    if (key === null || key === undefined) continue;
-    counts[key] = (counts[key] ?? 0) + 1;
+/**
+ * ログを読み取り、読めた件数と飛ばした件数を返す。
+ * @param {string} text
+ * @returns {{entries: object[], parsed: number, skipped: number}}
+ */
+export function parseLogSafe(text) {
+  const lines = splitLines(text);
+  const entries = [];
+  let skipped = 0;
+  for (const line of lines) {
+    const entry = parseOneLine(line);
+    if (entry === null) {
+      skipped += 1;
+    } else {
+      entries.push(entry);
+    }
   }
-  return counts;
+  return { entries, parsed: entries.length, skipped };
 }
 
-export function sortCounts(counts, options = {}) {
-  const limit = options.limit ?? Number.POSITIVE_INFINITY;
-  const direction = options.direction ?? "desc";
-  const factor = direction === "asc" ? 1 : -1;
-  return Object.entries(counts)
-    .map(([key, count]) => ({ key, count }))
-    .sort((left, right) => {
-      if (left.count !== right.count) return (left.count - right.count) * factor;
-      return left.key.localeCompare(right.key);
-    })
-    .slice(0, limit);
+/**
+ * ログの先頭の 1 件を返す。空なら null。
+ * @param {string} text
+ * @returns {object|null}
+ */
+export function parseFirst(text) {
+  return parseLog(text)[0] ?? null;
 }
 
-export function countByStatus(entries) {
-  return countBy(entries, (entry) => entry.status);
+/**
+ * 行数を返す。空行は数えない。
+ * @param {string} text
+ * @returns {number}
+ */
+export function countLines(text) {
+  return splitLines(text).length;
 }
 
-export function countByStatusClass(entries) {
-  return countBy(entries, (entry) => statusClass(entry.status));
+/**
+ * 読めなかった行だけを返す。
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function invalidLines(text) {
+  return splitLines(text).filter((line) => parseOneLine(line) === null);
 }
 
-export function countByMethod(entries) {
-  return countBy(entries, (entry) => entry.method || null);
+/**
+ * ログの内容をテキストのまま検索する。
+ * @param {string} text
+ * @param {string|RegExp} query
+ * @returns {string[]}
+ */
+export function searchLines(text, query) {
+  const pattern = query instanceof RegExp ? query : new RegExp(String(query));
+  return splitLines(text).filter((line) => pattern.test(line));
 }
 
-export function countByPath(entries) {
-  return countBy(entries, (entry) => entry.path || null);
+/**
+ * パスが一致する行だけを返す。
+ * @param {string} text
+ * @param {string} path
+ * @returns {object[]}
+ */
+export function entriesForPath(text, path) {
+  return parseLog(text).filter((entry) => entry.path === path);
 }
 
-export function countByIp(entries) {
-  return countBy(entries, (entry) => entry.ip);
+/**
+ * IP が一致する行だけを返す。
+ * @param {string} text
+ * @param {string} ip
+ * @returns {object[]}
+ */
+export function entriesForIp(text, ip) {
+  return parseLog(text).filter((entry) => entry.ip === ip);
 }
 
-export function countByDay(entries) {
-  return countBy(entries, (entry) => {
-    if (!entry.timestamp) return null;
-    return entry.timestamp.toISOString().slice(0, 10);
-  });
+/**
+ * エラーの行だけを返す。
+ * @param {string} text
+ * @returns {object[]}
+ */
+export function errorEntries(text) {
+  return parseLog(text).filter((entry) => entry.status !== null && entry.status >= 400);
 }
 
-export function countByHour(entries) {
-  return countBy(entries, (entry) => {
-    if (!entry.timestamp) return null;
-    return String(entry.timestamp.getUTCHours()).padStart(2, "0");
-  });
+/**
+ * 読めた行の合計バイト数を返す。
+ * @param {string} text
+ * @returns {number}
+ */
+export function totalBytes(text) {
+  return parseLog(text).reduce((total, entry) => total + Number(entry.bytes ?? 0), 0);
 }
 
-export function topPaths(entries, limit = 5) {
-  return sortCounts(countByPath(entries), { limit });
-}
-
-export function topIps(entries, limit = 5) {
-  return sortCounts(countByIp(entries), { limit });
-}
-
-export function errorCount(entries) {
-  return entries.filter(isError).length;
-}
-
-export function errorRate(entries) {
-  if (entries.length === 0) return 0;
-  return errorCount(entries) / entries.length;
-}
-
-export function totalBytes(entries) {
-  return entries.reduce((total, entry) => total + (Number.isFinite(entry.bytes) ? entry.bytes : 0), 0);
-}
-
-export function averageBytes(entries) {
-  if (entries.length === 0) return 0;
-  return totalBytes(entries) / entries.length;
-}
-
-export function filterByStatus(entries, status) {
-  return entries.filter((entry) => entry.status === status);
-}
-
-export function filterByStatusRange(entries, min, max) {
-  return entries.filter(
-    (entry) => entry.status !== null && entry.status >= min && entry.status <= max,
-  );
-}
-
-export function filterByMethod(entries, method) {
-  const upper = method.toUpperCase();
-  return entries.filter((entry) => entry.method === upper);
-}
-
-export function filterByPath(entries, path) {
-  return entries.filter((entry) => entry.path === path);
-}
-
-export function filterByIp(entries, ip) {
-  return entries.filter((entry) => entry.ip === ip);
-}
-
-export function uniqueIps(entries) {
-  return [...new Set(entries.map((entry) => entry.ip))];
-}
-
-export function uniquePaths(entries) {
-  return [...new Set(entries.map((entry) => entry.path))];
-}
-
-export function sumBytesByStatus(entries) {
-  const totals = {};
-  for (const entry of entries) {
-    if (entry.status === null) continue;
-    totals[entry.status] = (totals[entry.status] ?? 0) + entry.bytes;
+/**
+ * ステータスごとの代表的な行を返す。
+ * @param {string} text
+ * @returns {Record<string, object>}
+ */
+export function firstByStatus(text) {
+  const result = {};
+  for (const entry of parseLog(text)) {
+    const key = String(entry.status);
+    if (!Object.hasOwn(result, key)) {
+      result[key] = entry;
+    }
   }
-  return totals;
+  return result;
 }
 
-export function percent(part, total, decimals = 1) {
-  if (total === 0) return "0.0%";
-  return `${((part / total) * 100).toFixed(decimals)}%`;
-}
-
-export function median(values) {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[middle];
-  return (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-export function summarize(entries) {
-  return {
-    total: entries.length,
-    statuses: countByStatus(entries),
-    classes: countByStatusClass(entries),
-    methods: countByMethod(entries),
-    errors: errorCount(entries),
-    errorRate: errorRate(entries),
-    bytes: totalBytes(entries),
-    uniqueIps: uniqueIps(entries).length,
-    topPaths: topPaths(entries, 3),
-  };
-}
-
-export function formatSummary(summary) {
-  const lines = [
-    `リクエスト: ${summary.total}`,
-    `エラー: ${summary.errors} (${percent(summary.errors, summary.total)})`,
-    `転送量: ${summary.bytes} bytes`,
-    `IP: ${summary.uniqueIps}`,
-  ];
-  const statuses = Object.entries(summary.statuses).sort((a, b) => Number(a[0]) - Number(b[0]));
-  for (const [status, count] of statuses) {
-    lines.push(`${status}: ${count}`);
-  }
-  return lines.join("\n");
-}
-
-export function groupBy(entries, keyFn) {
-  const groups = new Map();
-  for (const entry of entries) {
-    const key = typeof keyFn === "function" ? keyFn(entry) : entry[keyFn];
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(entry);
+/**
+ * ログを日付ごとにまとめる。
+ * @param {string} text
+ * @returns {Record<string, object[]>}
+ */
+export function groupByDay(text) {
+  const groups = {};
+  for (const entry of parseLog(text)) {
+    if (!(entry.timestamp instanceof Date)) {
+      continue;
+    }
+    const key = entry.timestamp.toISOString().slice(0, 10);
+    groups[key] = groups[key] ?? [];
+    groups[key].push(entry);
   }
   return groups;
 }
 
-export function slowestByBytes(entries, limit = 5) {
-  return [...entries]
-    .filter((entry) => Number.isFinite(entry.bytes))
-    .sort((a, b) => b.bytes - a.bytes)
-    .slice(0, limit);
-}
-
-export function pathsWithErrors(entries) {
-  return uniquePaths(entries.filter(isError));
-}
-
-export function requestsPerSecond(entries, windowSeconds) {
-  if (windowSeconds <= 0) return 0;
-  return entries.length / windowSeconds;
-}
-
-export function parseLogSafe(text) {
-  let parsed = 0;
-  let skipped = 0;
-  const entries = [];
-  for (const line of String(text).split(/\r?\n/)) {
-    if (line.trim() === "") continue;
-    const entry = parseLine(line);
-    if (entry) {
-      entries.push(entry);
-      parsed += 1;
-    } else {
-      skipped += 1;
-    }
+/**
+ * ログの概要を文字列にする。
+ * @param {string} text
+ * @returns {string}
+ */
+export function describeLog(text) {
+  const result = parseLogSafe(text);
+  const statuses = {};
+  for (const entry of result.entries) {
+    const key = String(entry.status);
+    statuses[key] = (statuses[key] ?? 0) + 1;
   }
-  return { entries, parsed, skipped };
+  return `行数 ${result.parsed}、読めない行 ${result.skipped}、ステータス ${JSON.stringify(statuses)}`;
 }
 
-export function compareStatusCounts(left, right) {
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-  const differences = [];
-  for (const key of keys) {
-    const a = left[key] ?? 0;
-    const b = right[key] ?? 0;
-    if (a !== b) differences.push({ status: key, left: a, right: b });
-  }
-  return differences;
+/**
+ * 2 つのログを結合して読み取る。
+ * @param {string[]} texts
+ * @returns {object[]}
+ */
+export function parseMany(texts) {
+  return texts.flatMap((text) => parseLog(text));
+}
+
+/**
+ * ステータスが 200 番台かを返す。
+ * @param {object} entry
+ * @returns {boolean}
+ */
+export function isSuccess(entry) {
+  return typeof entry.status === "number" && entry.status >= 200 && entry.status < 300;
+}
+
+/**
+ * ステータスが 300 番台かを返す。
+ * @param {object} entry
+ * @returns {boolean}
+ */
+export function isRedirect(entry) {
+  return typeof entry.status === "number" && entry.status >= 300 && entry.status < 400;
+}
+
+/**
+ * リクエストが API 向けかを返す。
+ * @param {object} entry
+ * @returns {boolean}
+ */
+export function isApiRequest(entry) {
+  return String(entry.path ?? "").startsWith("/api/");
+}
+
+/**
+ * ログを時刻順に並べる。
+ * @param {object[]} entries
+ * @returns {object[]}
+ */
+export function sortByTime(entries) {
+  return [...entries].sort((left, right) => {
+    const a = left.timestamp instanceof Date ? left.timestamp.getTime() : 0;
+    const b = right.timestamp instanceof Date ? right.timestamp.getTime() : 0;
+    return a - b;
+  });
+}
+
+/**
+ * 1 行のログを、短い説明にする。
+ * @param {object} entry
+ * @returns {string}
+ */
+export function describeEntry(entry) {
+  return `${entry.ip ?? "-"} ${entry.method ?? "-"} ${entry.path ?? "-"} ${entry.status ?? "-"}`;
 }

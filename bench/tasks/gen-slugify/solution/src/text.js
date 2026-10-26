@@ -1,3 +1,5 @@
+import { foldSpecialLatin, isNil } from "./util.js";
+
 export function normalizeWhitespace(text) {
   return String(text).replace(/\s+/g, " ").trim();
 }
@@ -439,27 +441,41 @@ export function escapeRegExpText(text) {
 }
 
 export function slugify(text, options = {}) {
-  const { maxLength } = options;
-  if (text === null || text === undefined) return "";
-  const value = stripAccents(String(text))
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (maxLength === undefined || maxLength === null || !Number.isFinite(maxLength)) {
-    return value;
+  if (isNil(text)) return "";
+  const settings = options ?? {};
+  const separator = settings.separator ?? "-";
+  if (
+    typeof separator !== "string" ||
+    [...separator].length !== 1 ||
+    /^[A-Za-z0-9]$/.test(separator) ||
+    /\s/.test(separator)
+  ) {
+    throw new RangeError("separator must be one non-alphanumeric character");
   }
+  const lowercase = settings.lowercase !== false;
+  let value = foldSpecialLatin(toHalfWidth(String(text)));
+  value = stripAccents(value);
+  if (lowercase) value = value.toLowerCase();
+  const pattern = lowercase ? /[^a-z0-9]+/g : /[^A-Za-z0-9]+/g;
+  value = value.replace(pattern, separator);
+  const escaped = escapeRegExp(separator);
+  value = value.replace(new RegExp(`${escaped}{2,}`, "g"), separator);
+  value = value.replace(new RegExp(`^${escaped}+|${escaped}+$`, "g"), "");
+  const maxLength = settings.maxLength;
+  if (maxLength === undefined || maxLength === null) return value;
+  if (!Number.isFinite(maxLength)) return value;
   const limit = Math.floor(maxLength);
   if (limit <= 0) return "";
-  if (value.length <= limit) return value;
-  const words = value.split("-");
-  if (words[0].length > limit) return words[0].slice(0, limit);
+  if ([...value].length <= limit) return value;
+  const words = value.split(separator);
+  if ([...words[0]].length > limit) {
+    return [...words[0]].slice(0, limit).join("");
+  }
   let result = words[0];
-  for (let i = 1; i < words.length; i += 1) {
-    if (result.length + 1 + words[i].length <= limit) {
-      result += "-" + words[i];
-    } else {
-      break;
-    }
+  for (let index = 1; index < words.length; index += 1) {
+    const candidate = result + separator + words[index];
+    if ([...candidate].length <= limit) result = candidate;
+    else break;
   }
   return result;
 }

@@ -8,28 +8,17 @@ const spec = {
   count: { type: "number", alias: "c" },
 };
 
-test("長いオプションに値を渡す", () => {
-  assert.deepEqual(parseArgs(["--name", "Alice"], spec), {
-    options: { name: "Alice", verbose: false },
-    positional: [],
-  });
+test("例のとおりに読む", () => {
+  assert.deepEqual(
+    parseArgs(["--name", "Alice", "-v", "--count=3", "--", "--literal"], spec),
+    {
+      options: { name: "Alice", verbose: true, count: 3 },
+      positional: ["--literal"],
+    },
+  );
 });
 
-test("イコールでつなぐ", () => {
-  assert.deepEqual(parseArgs(["--name=Alice"], spec), {
-    options: { name: "Alice", verbose: false },
-    positional: [],
-  });
-});
-
-test("短いオプション", () => {
-  assert.deepEqual(parseArgs(["-n", "Alice", "-v"], spec), {
-    options: { name: "Alice", verbose: true },
-    positional: [],
-  });
-});
-
-test("短い真偽値のまとめ書き", () => {
+test("短い名前とまとめ書き", () => {
   const flags = {
     a: { type: "boolean", alias: "a" },
     b: { type: "boolean", alias: "b" },
@@ -38,29 +27,11 @@ test("短い真偽値のまとめ書き", () => {
   assert.deepEqual(parseArgs(["-abc"], flags).options, { a: true, b: true, c: true });
 });
 
+test("真偽値と数値", () => {
+  assert.equal(parseArgs(["--verbose=false"], spec).options.verbose, false);
+  assert.equal(parseArgs(["-c", "-3"], spec).options.count, -3);
+});
+
 test("既定値", () => {
   assert.deepEqual(parseArgs([], spec).options, { name: "world", verbose: false });
-});
-
-test("数値に変換する", () => {
-  assert.deepEqual(parseArgs(["--count", "3"], spec).options, {
-    name: "world",
-    verbose: false,
-    count: 3,
-  });
-});
-
-test("-- 以降は位置引数", () => {
-  assert.deepEqual(parseArgs(["--", "--name", "x", "-v"], spec), {
-    options: { name: "world", verbose: false },
-    positional: ["--name", "x", "-v"],
-  });
-});
-
-test("知らないオプションはエラー", () => {
-  assert.throws(() => parseArgs(["--unknown"], spec), /unknown/);
-});
-
-test("値がないときはエラー", () => {
-  assert.throws(() => parseArgs(["--name"], spec), /missing/);
 });

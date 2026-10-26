@@ -437,3 +437,7 @@ export function removeSuffix(text, suffix) {
 export function escapeRegExpText(text) {
   return escapeRegExp(text);
 }
+
+export function slugify() {
+  throw new Error("slugify is not implemented");
+}

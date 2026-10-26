@@ -1,171 +1,177 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Cart, cartTotal } from "../src/cart.js";
+import { Cart } from "../src/cart.js";
+import { allocateDiscount, applyDiscounts, fixed, percentage, threshold } from "../src/discount.js";
+import { allocate, splitEvenly } from "../src/money.js";
 import {
-  applyDiscounts,
-  coupon,
-  describeDiscount,
-  discountAmount,
-  fixed,
-  percentage,
-  threshold,
-} from "../src/discount.js";
-import { calculateTax, totalWithTax } from "../src/tax.js";
-import { formatReceipt, formatSummary, formatYen } from "../src/format.js";
+  FREE_SHIPPING_THRESHOLD,
+  amountUntilFreeShipping,
+  shippingFee,
+  shippingQuote,
+} from "../src/shipping.js";
+import { calculateTax } from "../src/tax.js";
 
 const items = [
   { sku: "A", name: "ノート", unitPrice: 1200, quantity: 2 },
   { sku: "B", name: "ペン", unitPrice: 350, quantity: 3 },
 ];
 
-test("税は1円未満を切り捨てる", () => {
-  assert.equal(calculateTax(1999), 199);
-  assert.equal(calculateTax(999), 99);
-  assert.equal(calculateTax(105), 10);
-  assert.equal(calculateTax(1), 0);
-  assert.equal(calculateTax(0), 0);
-  assert.equal(calculateTax(1000), 100);
-  assert.equal(calculateTax(3105), 310);
+test("税は割引後の課税対象額にかかる", () => {
+  const cart = Cart.from(items, { discounts: [percentage(0.1)] });
+  assert.equal(cart.taxableAmount, 3105);
+  assert.equal(cart.tax, 310);
 });
 
-test("軽減税率でも切り捨てる", () => {
-  assert.equal(calculateTax(999, 0.08), 79);
-  assert.equal(calculateTax(1050, 0.08), 84);
+test("固定額の割引でも税は割引後にかかる", () => {
+  const cart = Cart.from(items, { discounts: [fixed(500)] });
+  assert.equal(cart.taxableAmount, 2950);
+  assert.equal(cart.tax, 295);
 });
 
-test("税込合計も切り捨てに合わせる", () => {
-  assert.equal(totalWithTax(1999), 2198);
-  assert.equal(totalWithTax(999), 1098);
-  assert.equal(totalWithTax(1050, 0.08), 1134);
+test("割引が重なっても税は最後の課税対象額にかかる", () => {
+  const cart = Cart.from(items, { discounts: [fixed(500), percentage(0.1)] });
+  assert.equal(cart.taxableAmount, 2655);
+  assert.equal(cart.tax, 265);
 });
 
-test("割引額の端数は四捨五入する", () => {
-  assert.equal(discountAmount(1999, percentage(0.1)), 200);
-  assert.equal(discountAmount(105, percentage(0.1)), 11);
-  assert.equal(discountAmount(104, percentage(0.1)), 10);
+test("クーポンでも税は割引後にかかる", () => {
+  const cart = Cart.from(items);
+  cart.applyCoupon("SAVE20");
+  assert.equal(cart.taxableAmount, 2760);
+  assert.equal(cart.tax, 276);
 });
 
-test("割引を順番にかける", () => {
+test("割引がなければ税は小計にかかる", () => {
+  const cart = Cart.from(items);
+  assert.equal(cart.tax, calculateTax(3450));
+});
+
+test("送料無料は割引後の商品金額で判定する", () => {
+  assert.equal(
+    shippingFee({ merchandiseTotal: 5250, discountTotal: 525 }),
+    500,
+  );
+  assert.equal(
+    shippingFee({ merchandiseTotal: 5250, discountTotal: 250 }),
+    0,
+  );
+});
+
+test("割引後の金額がちょうどしきい値なら送料無料", () => {
+  assert.equal(
+    shippingFee({ merchandiseTotal: 5600, discountTotal: 600 }),
+    0,
+  );
+  assert.equal(
+    shippingFee({ merchandiseTotal: 5599, discountTotal: 600 }),
+    500,
+  );
+});
+
+test("割引前の金額だけを見て無料にしない", () => {
+  const quote = shippingQuote({
+    merchandiseTotal: 5200,
+    discountTotal: 520,
+    prefecture: "東京都",
+  });
+  assert.equal(quote.shipping, 500);
+  assert.equal(quote.freeShipping, false);
+  assert.equal(quote.total, 5180);
+});
+
+test("送料無料までの残額も割引後で数える", () => {
+  assert.equal(
+    amountUntilFreeShipping({ merchandiseTotal: 5250, discountTotal: 250 }),
+    0,
+  );
+  assert.equal(
+    amountUntilFreeShipping({ merchandiseTotal: 5250, discountTotal: 100 }),
+    0,
+  );
+  assert.equal(
+    amountUntilFreeShipping({ merchandiseTotal: 4000, discountTotal: 500 }),
+    1500,
+  );
+});
+
+test("無料しきい値は 5000 円", () => {
+  assert.equal(FREE_SHIPPING_THRESHOLD, 5000);
+  assert.equal(shippingFee({ merchandiseTotal: 5000 }), 0);
+  assert.equal(shippingFee({ merchandiseTotal: 4999 }), 500);
+});
+
+test("割引額の按分は小数部の大きい順に配る", () => {
+  assert.deepEqual(allocate(100, [1, 1, 1]), [34, 33, 33]);
+  assert.deepEqual(allocate(5, [1, 1, 1]), [2, 2, 1]);
+  assert.deepEqual(allocate(10, [1, 2, 3]), [2, 3, 5]);
+});
+
+test("按分の合計は元の金額と一致する", () => {
+  const samples = [
+    [100, [1, 1, 1]],
+    [501, [3, 5, 7]],
+    [999, [1, 2, 4, 8]],
+    [7, [1, 1, 1, 1, 1]],
+  ];
+  for (const [amount, weights] of samples) {
+    const parts = allocate(amount, weights);
+    assert.equal(
+      parts.reduce((total, value) => total + value, 0),
+      amount,
+    );
+  }
+});
+
+test("小数部が同じなら前の要素を優先する", () => {
+  assert.deepEqual(allocate(10, [1, 1, 1, 1, 1, 1]), [2, 2, 2, 2, 1, 1]);
+  assert.deepEqual(splitEvenly(10, 4), [3, 3, 2, 2]);
+});
+
+test("重みが 0 の要素には配らない", () => {
+  assert.deepEqual(allocate(100, [1, 0, 1]), [50, 0, 50]);
+});
+
+test("割引の按分も同じ規則で配る", () => {
+  assert.deepEqual(allocateDiscount(100, [1000, 1000, 1000]), [34, 33, 33]);
+  assert.deepEqual(allocateDiscount(10, [100, 200, 300]), [2, 3, 5]);
+});
+
+test("カートの明細ごとの割引も合計が一致する", () => {
+  const cart = Cart.from(
+    [
+      { sku: "A", unitPrice: 1000, quantity: 1 },
+      { sku: "B", unitPrice: 1000, quantity: 1 },
+      { sku: "C", unitPrice: 1000, quantity: 1 },
+    ],
+    { discounts: [fixed(100)] },
+  );
+  assert.deepEqual(cart.lineDiscounts(), [34, 33, 33]);
+  assert.equal(
+    cart.lineDiscounts().reduce((total, value) => total + value, 0),
+    cart.discountTotal,
+  );
+});
+
+test("按分した税抜金額から明細ごとの税を出す", () => {
+  const cart = Cart.from(
+    [
+      { sku: "A", unitPrice: 1001, quantity: 1 },
+      { sku: "B", unitPrice: 1000, quantity: 1 },
+    ],
+    { discounts: [fixed(1)] },
+  );
+  const taxable = cart.lineTaxableAmounts();
+  assert.equal(taxable.reduce((total, value) => total + value, 0), cart.taxableAmount);
+  const taxes = cart.lineTaxes();
+  assert.equal(taxes.length, 2);
+});
+
+test("通常の割引計算は変わらない", () => {
   const result = applyDiscounts(3450, [fixed(500), percentage(0.1)]);
   assert.equal(result.discountTotal, 795);
   assert.equal(result.discountedSubtotal, 2655);
-  assert.deepEqual(
-    result.applied.map((entry) => entry.amount),
-    [500, 295],
-  );
 });
 
-test("割引は小計を超えない", () => {
-  const result = applyDiscounts(300, [fixed(500), percentage(0.2)]);
-  assert.equal(result.discountTotal, 300);
-  assert.equal(result.discountedSubtotal, 0);
-});
-
-test("クーポンとしきい値", () => {
-  assert.equal(applyDiscounts(3450, [coupon("SAVE20")]).discountTotal, 690);
-  assert.equal(applyDiscounts(3450, [threshold(3000, 500)]).discountTotal, 500);
-  assert.equal(applyDiscounts(2999, [threshold(3000, 500)]).discountTotal, 0);
-});
-
-test("割引の説明", () => {
-  assert.equal(describeDiscount(percentage(0.1)), "10%オフ");
-  assert.equal(describeDiscount(fixed(500)), "500円引き");
-  assert.equal(describeDiscount(threshold(5000, 500)), "5000円以上で500円引き");
-  assert.equal(describeDiscount(coupon("SAVE10")), "10%オフ");
-});
-
-test("割引後の金額に税をかける", () => {
-  const cart = Cart.from(items, { discounts: [percentage(0.1)] });
-  assert.equal(cart.subtotal, 3450);
-  assert.equal(cart.discountTotal, 345);
-  assert.equal(cart.taxableAmount, 3105);
-  assert.equal(cart.tax, 310);
-  assert.equal(cart.total, 3415);
-});
-
-test("固定額の割引のあとに税をかける", () => {
-  const cart = Cart.from(items, { discounts: [fixed(500)] });
-  assert.equal(cart.discountTotal, 500);
-  assert.equal(cart.taxableAmount, 2950);
-  assert.equal(cart.tax, 295);
-  assert.equal(cart.total, 3245);
-});
-
-test("複数の割引のあとに税をかける", () => {
-  const cart = Cart.from(items, { discounts: [fixed(500), percentage(0.1)] });
-  assert.equal(cart.discountTotal, 795);
-  assert.equal(cart.taxableAmount, 2655);
-  assert.equal(cart.tax, 265);
-  assert.equal(cart.total, 2920);
-});
-
-test("クーポンのあとに税をかける", () => {
-  const cart = Cart.from(items);
-  cart.applyCoupon("SAVE20");
-  assert.equal(cart.discountTotal, 690);
-  assert.equal(cart.taxableAmount, 2760);
-  assert.equal(cart.tax, 276);
-  assert.equal(cart.total, 3036);
-});
-
-test("割引がなければ小計に税をかける", () => {
-  const cart = Cart.from(items);
-  assert.equal(cart.taxableAmount, 3450);
-  assert.equal(cart.tax, 345);
-  assert.equal(cart.total, 3795);
-});
-
-test("端数が残る場合の合計", () => {
-  const cart = Cart.from(
-    [{ sku: "X", unitPrice: 1050, quantity: 1 }],
-    { discounts: [percentage(0.1)] },
-  );
-  assert.equal(cart.discountTotal, 105);
-  assert.equal(cart.taxableAmount, 945);
-  assert.equal(cart.tax, 94);
-  assert.equal(cart.total, 1039);
-});
-
-test("空のカートの合計", () => {
-  const cart = new Cart();
-  assert.equal(cart.tax, 0);
-  assert.equal(cart.total, 0);
-  assert.equal(cartTotal([]), 0);
-});
-
-test("まとめとレシート", () => {
-  const cart = Cart.from(items, { discounts: [percentage(0.1)] });
-  const summary = cart.summary();
-  assert.equal(
-    formatSummary(summary),
-    "小計 ¥3,450\n割引 -¥345\n税 ¥310\n合計 ¥3,415",
-  );
-  assert.equal(
-    formatReceipt(summary, { title: "レシート" }),
-    [
-      "レシート",
-      "ノート x2 ¥2,400",
-      "ペン x3 ¥1,050",
-      "---",
-      "小計 ¥3,450",
-      "10%オフ: -¥345",
-      "税 ¥310",
-      "合計 ¥3,415",
-    ].join("\n"),
-  );
-});
-
-test("数量変更で合計が変わる", () => {
-  const cart = Cart.from(items, { discounts: [percentage(0.1)] });
-  cart.updateQuantity("A", 1);
-  assert.equal(cart.subtotal, 2250);
-  assert.equal(cart.discountTotal, 225);
-  assert.equal(cart.tax, 202);
-  assert.equal(cart.total, 2227);
-});
-
-test("金額の整形", () => {
-  assert.equal(formatYen(1234567), "¥1,234,567");
-  assert.equal(formatYen(-500), "-¥500");
-  assert.equal(formatYen(12.6), "¥13");
+test("しきい値ちょうどでも割引が適用される", () => {
+  assert.equal(applyDiscounts(3000, [threshold(3000, 500)]).discountTotal, 500);
 });

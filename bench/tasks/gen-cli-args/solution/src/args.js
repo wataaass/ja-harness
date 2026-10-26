@@ -1,120 +1,93 @@
-const TYPES = new Set(["string", "number", "boolean"]);
+import {
+  coerceValue,
+  formatOptionHelp,
+  listOptionNames as optionNames,
+  normalizeSpec,
+  splitLongOption,
+} from "./spec.js";
 
-export function parseArgs(argv, spec = {}) {
+export function listOptionNames(spec) {
+  return optionNames(spec);
+}
+
+export function usageText(spec, command = "app") {
+  const lines = [`使い方: ${command} [options] [files...]`, "", "オプション:"];
+  for (const name of listOptionNames(spec)) {
+    lines.push(`  ${formatOptionHelp(name, spec[name])}`);
+  }
+  return lines.join("\n");
+}
+
+export function parseArgs(argv, spec = {}, options = {}) {
   if (!Array.isArray(argv)) throw new TypeError("argv must be an array");
-  if (spec === null || typeof spec !== "object") {
-    throw new TypeError("spec must be an object");
-  }
-  const longMap = new Map();
-  const aliasMap = new Map();
-  for (const [name, descriptor] of Object.entries(spec)) {
-    const type = descriptor.type ?? "string";
-    if (!TYPES.has(type)) throw new TypeError(`unknown type: ${type}`);
-    longMap.set(name, { name, ...descriptor, type });
-    if (descriptor.alias) aliasMap.set(descriptor.alias, name);
-  }
-
-  const options = {};
-  for (const [name, descriptor] of longMap) {
-    if (Object.prototype.hasOwnProperty.call(descriptor, "default")) {
-      options[name] = descriptor.default;
-    }
-  }
-
+  const { entries, aliases, defaults } = normalizeSpec(spec);
+  const stopAtPositional = options?.stopAtPositional === true;
+  const parsed = { ...defaults };
   const positional = [];
   let stop = false;
-  let i = 0;
+  let index = 0;
 
-  const assign = (name, raw, hasValue) => {
-    const descriptor = longMap.get(name);
-    if (descriptor.type === "boolean") {
-      if (!hasValue) {
-        options[name] = true;
-      } else if (raw === "true") {
-        options[name] = true;
-      } else if (raw === "false") {
-        options[name] = false;
-      } else {
-        throw new Error(`invalid boolean for --${name}: ${raw}`);
-      }
-      return;
-    }
-    if (!hasValue) throw new Error(`missing value for --${name}`);
-    if (descriptor.type === "number") {
-      const number = Number(raw);
-      if (raw === "" || Number.isNaN(number)) {
-        throw new Error(`invalid number for --${name}: ${raw}`);
-      }
-      options[name] = number;
-    } else {
-      options[name] = raw;
-    }
-  };
-
-  while (i < argv.length) {
-    const token = argv[i];
+  while (index < argv.length) {
+    const token = String(argv[index]);
     if (stop) {
       positional.push(token);
-      i += 1;
+      index += 1;
       continue;
     }
     if (token === "--") {
       stop = true;
-      i += 1;
+      index += 1;
       continue;
     }
     if (token === "-" || !token.startsWith("-")) {
       positional.push(token);
-      i += 1;
+      if (stopAtPositional) stop = true;
+      index += 1;
       continue;
     }
     if (token.startsWith("--")) {
-      const body = token.slice(2);
-      const equals = body.indexOf("=");
-      const name = equals === -1 ? body : body.slice(0, equals);
-      if (!longMap.has(name)) throw new Error(`unknown option: --${name}`);
-      const descriptor = longMap.get(name);
-      if (equals !== -1) {
-        assign(name, body.slice(equals + 1), true);
-        i += 1;
-        continue;
-      }
+      const { name, hasValue, value } = splitLongOption(token);
+      if (!entries.has(name)) throw new Error(`unknown option: --${name}`);
+      const descriptor = entries.get(name);
       if (descriptor.type === "boolean") {
-        assign(name, undefined, false);
-        i += 1;
+        parsed[name] = hasValue ? coerceValue(descriptor, value) : true;
+        index += 1;
         continue;
       }
-      if (i + 1 >= argv.length) throw new Error(`missing value for --${name}`);
-      assign(name, argv[i + 1], true);
-      i += 2;
+      if (hasValue) {
+        parsed[name] = coerceValue(descriptor, value);
+        index += 1;
+        continue;
+      }
+      if (index + 1 >= argv.length) throw new Error(`missing value for --${name}`);
+      parsed[name] = coerceValue(descriptor, String(argv[index + 1]));
+      index += 2;
       continue;
     }
 
-    const cluster = token.slice(1);
+    const cluster = [...token.slice(1)];
     let consumedNext = false;
-    for (let j = 0; j < cluster.length; j += 1) {
-      const alias = cluster[j];
-      const name = aliasMap.get(alias);
-      if (!name) throw new Error(`unknown option: -${alias}`);
-      const descriptor = longMap.get(name);
+    for (let position = 0; position < cluster.length; position += 1) {
+      const alias = cluster[position];
+      if (!aliases.has(alias)) throw new Error(`unknown option: -${alias}`);
+      const name = aliases.get(alias);
+      const descriptor = entries.get(name);
       if (descriptor.type === "boolean") {
-        options[name] = true;
+        parsed[name] = true;
         continue;
       }
-      const rest = cluster.slice(j + 1);
+      const rest = cluster.slice(position + 1).join("");
       if (rest !== "") {
-        assign(name, rest, true);
-        j = cluster.length;
-      } else if (i + 1 < argv.length) {
-        assign(name, argv[i + 1], true);
-        consumedNext = true;
-        j = cluster.length;
-      } else {
-        throw new Error(`missing value for -${alias}`);
+        parsed[name] = coerceValue(descriptor, rest);
+        break;
       }
+      if (index + 1 >= argv.length) throw new Error(`missing value for -${alias}`);
+      parsed[name] = coerceValue(descriptor, String(argv[index + 1]));
+      consumedNext = true;
+      break;
     }
-    i += consumedNext ? 2 : 1;
+    index += consumedNext ? 2 : 1;
   }
 
-  return { options, positional };
+  return { options: parsed, positional };
 }
