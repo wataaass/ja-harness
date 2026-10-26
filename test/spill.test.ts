@@ -96,6 +96,64 @@ describe("limitToolResult", () => {
   });
 });
 
+describe("limitToolResult の性質", () => {
+  it("300 通りの入力で、上限以下・全文のパス・最後の行を必ず保つ", () => {
+    const estimate = createEstimator();
+    const savedPath = "/tmp/full.txt";
+    // 線形合同法 x = (x * 1103515245 + 12345) mod 2^31。Math.imul で桁あふれなく計算する
+    let x = 42;
+    const next = (): number => {
+      x = (Math.imul(x, 1103515245) + 12345) & 0x7fffffff;
+      return x / 0x80000000;
+    };
+    const asciiSource = "abcdefghijklmnopqrstuvwxyz 0123456789";
+    const japaneseSource = "日本語の行".repeat(200);
+    let checked = 0;
+
+    for (let c = 0; c < 300; c += 1) {
+      const useJapanese = c % 2 === 0;
+      const sourceChars = Array.from(
+        useJapanese
+          ? japaneseSource
+          : Array.from({ length: 900 }, () => {
+              const pick = Math.floor(next() * asciiSource.length);
+              return asciiSource.charAt(pick);
+            }).join(""),
+      );
+
+      const lineCount = 1 + Math.floor(next() * 80);
+      const lines: string[] = [];
+      for (let i = 0; i < lineCount; i += 1) {
+        const length = Math.floor(next() * 901);
+        const body = sourceChars.slice(0, length).join("");
+        const marker = next() < 0.15 ? "error " : "";
+        lines.push(`L${i}: ${marker}${body}`);
+      }
+
+      const text = lines.join("\n");
+      const maxTokens = 150 + Math.floor(next() * 2851);
+      if (estimate(text) <= maxTokens) {
+        continue;
+      }
+
+      checked += 1;
+      const out = limitToolResult(text, {
+        maxTokens,
+        estimate,
+        save: () => savedPath,
+      });
+      const footer = `[Full output (${lineCount} lines): ${savedPath}. Read it with a line range or grep.]`;
+
+      expect(estimate(out)).toBeLessThanOrEqual(maxTokens);
+      expect(out).toContain(footer);
+      const afterFooter = out.slice(out.indexOf(footer) + footer.length);
+      expect(afterFooter).toContain(`L${lineCount - 1}:`);
+    }
+
+    expect(checked).toBeGreaterThan(0);
+  });
+});
+
 describe("createFileSaver", () => {
   it("save を呼ぶまでフォルダを作らない", () => {
     const root = mkdtempSync(join(tmpdir(), "ja-harness-spill-"));

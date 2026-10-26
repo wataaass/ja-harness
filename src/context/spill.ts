@@ -8,6 +8,8 @@ export type SpillOptions = {
   save: (text: string) => string;
 };
 
+type ImportantLine = { index: number; text: string };
+
 const IMPORTANT_PATTERN = /error|fail|exception|warn|panic|traceback|✗|×/i;
 const MAX_IMPORTANT_CHARS = 300;
 
@@ -106,14 +108,36 @@ function takeTail(
   return { lines: out, consumed: end - start };
 }
 
-function selectImportant(
+// 末尾の行を決める。1行も入らないときは最後の行の先頭だけを残す。
+function pickTail(
   lines: string[],
   budget: number,
   estimate: Estimator,
-): string[] {
-  const out: string[] = [];
+): { start: number; lines: string[] } | null {
+  const total = lines.length;
+  const tail = takeTail(lines, 1, total, budget, estimate);
+  if (tail.lines.length > 0) {
+    return { start: total - tail.consumed, lines: tail.lines };
+  }
+  const fitted = fitPrefix(lines[total - 1], budget, estimate);
+  if (fitted === null) {
+    return null;
+  }
+  return { start: total - 1, lines: [fitted] };
+}
 
-  for (const line of lines) {
+// 大事な行を、start から end の手前まで選ぶ。元の行番号も返す。
+function selectImportant(
+  lines: string[],
+  start: number,
+  end: number,
+  budget: number,
+  estimate: Estimator,
+): ImportantLine[] {
+  const out: ImportantLine[] = [];
+
+  for (let i = start; i < end; i += 1) {
+    const line = lines[i];
     if (!IMPORTANT_PATTERN.test(line)) {
       continue;
     }
@@ -123,39 +147,14 @@ function selectImportant(
       chars.length > MAX_IMPORTANT_CHARS
         ? `${chars.slice(0, MAX_IMPORTANT_CHARS).join("")}…`
         : line;
-    const candidate = out.length === 0 ? text : `${joinLines(out)}\n${text}`;
+    const candidate = joinLines([...out.map((item) => item.text), text]);
     if (estimate(candidate) > budget) {
       break;
     }
-    out.push(text);
+    out.push({ index: i, text });
   }
 
   return out;
-}
-
-function truncateToTokens(
-  text: string,
-  budget: number,
-  estimate: Estimator,
-): string {
-  if (estimate(text) <= budget) {
-    return text;
-  }
-  const chars = Array.from(text);
-  let low = 0;
-  let high = chars.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    if (estimate(`${chars.slice(0, mid).join("")}…`) <= budget) {
-      low = mid;
-    } else {
-      high = mid - 1;
-    }
-  }
-  if (low === 0) {
-    return "";
-  }
-  return `${chars.slice(0, low).join("")}…`;
 }
 
 export function limitToolResult(text: string, o: SpillOptions): string {
@@ -165,70 +164,75 @@ export function limitToolResult(text: string, o: SpillOptions): string {
 
   const path = o.save(text);
   const lines = text.split("\n");
-  const totalLines = lines.length;
-  const footer = `[Full output (${totalLines} lines): ${path}. Read it with a line range or grep.]`;
+  const total = lines.length;
+  const footer = `[Full output (${total} lines): ${path}. Read it with a line range or grep.]`;
+  if (o.estimate(footer) > o.maxTokens) {
+    return footer;
+  }
   const headerFor = (count: number): string =>
     `[... ${count} lines omitted. Important lines from the omitted part:]`;
 
-  const reserve = o.estimate(headerFor(totalLines)) + o.estimate(footer) + 8;
-  const remaining = Math.max(0, o.maxTokens - reserve);
-  const importantBudget = Math.floor(remaining * 0.25);
-  const tailBudget = Math.floor(remaining * 0.25);
-  const headBudget = remaining - importantBudget - tailBudget;
+  const budget = o.maxTokens - o.estimate(footer) - 2;
 
-  const head = takeHead(lines, 0, totalLines, headBudget, o.estimate);
-  const headLines = [...head.lines];
-  let headConsumed = head.consumed;
+  // 末尾
+  const tail = pickTail(lines, Math.floor(budget * 0.25), o.estimate);
+  if (tail === null) {
+    return footer;
+  }
+  const tailStart = tail.start;
+  const tailText = joinLines(tail.lines);
 
-  const tail = takeTail(
-    lines,
-    headConsumed,
-    totalLines,
-    tailBudget,
-    o.estimate,
+  // 先頭・大事な行に使える残り
+  const rest = budget - o.estimate(tailText) - 1;
+
+  // 大事な行（先頭の行 0 と末尾より前の部分から選ぶ）
+  const importantBudget = Math.floor(rest / 3);
+  const importantRoom = importantBudget - o.estimate(headerFor(total)) - 1;
+  const important =
+    importantRoom > 0
+      ? selectImportant(lines, 1, tailStart, importantRoom, o.estimate)
+      : [];
+
+  // 先頭（大事な行があれば、その分の予算を先に引く）
+  const importantText = joinLines(important.map((item) => item.text));
+  const headBudget =
+    important.length > 0
+      ? rest - o.estimate(headerFor(total)) - o.estimate(importantText) - 2
+      : rest;
+  const head = takeHead(lines, 0, tailStart, headBudget, o.estimate);
+  let headLines = head.lines;
+
+  // 先頭と重なる大事な行は外す（headLines.length が先頭の終わりの位置）
+  let shown = important.filter(
+    (item) => item.index >= headLines.length && item.index < tailStart,
   );
-  let tailStart = totalLines - tail.consumed;
-  let tailLines = tail.lines;
-  if (tailStart < headConsumed) {
-    tailLines = tailLines.slice(headConsumed - tailStart);
-    tailStart = headConsumed;
-  }
 
-  let middle = lines.slice(headConsumed, tailStart);
-  let important = selectImportant(middle, importantBudget, o.estimate);
-  const used = important.length === 0 ? 0 : o.estimate(joinLines(important));
-  const leftover = importantBudget - used;
-  if (leftover > 0 && headConsumed < tailStart) {
-    const extra = takeHead(
-      lines,
-      headConsumed,
-      tailStart,
-      leftover,
-      o.estimate,
-    );
-    if (extra.lines.length > 0) {
-      headLines.push(...extra.lines);
-      headConsumed += extra.consumed;
-      middle = lines.slice(headConsumed, tailStart);
-      important = selectImportant(middle, importantBudget, o.estimate);
+  const build = (): string => {
+    const headEnd = headLines.length;
+    const parts: string[] = [];
+    if (headLines.length > 0) {
+      parts.push(joinLines(headLines));
     }
-  }
+    if (shown.length > 0) {
+      parts.push(headerFor(tailStart - headEnd));
+      parts.push(joinLines(shown.map((item) => item.text)));
+    }
+    parts.push(footer);
+    parts.push(tailText);
+    return parts.join("\n");
+  };
 
-  const omitted = Math.max(0, tailStart - headConsumed);
-  const parts: string[] = [];
-  if (headLines.length > 0) {
-    parts.push(joinLines(headLines));
+  // 最後の安全策: 大事な行を後ろから、次に先頭の行を後ろから削る
+  let result = build();
+  while (o.estimate(result) > o.maxTokens && shown.length > 0) {
+    shown = shown.slice(0, -1);
+    result = build();
   }
-  if (important.length > 0) {
-    parts.push(headerFor(omitted));
-    parts.push(joinLines(important));
+  while (o.estimate(result) > o.maxTokens && headLines.length > 0) {
+    headLines = headLines.slice(0, -1);
+    result = build();
   }
-  parts.push(footer);
-  if (tailLines.length > 0) {
-    parts.push(joinLines(tailLines));
-  }
-
-  return truncateToTokens(parts.join("\n"), o.maxTokens, o.estimate);
+  return result;
 }
 
 export function createFileSaver(
