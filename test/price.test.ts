@@ -34,4 +34,43 @@ describe("rewritePays", () => {
       }),
     ).toBe(true);
   });
+
+  it("cacheWrite を省いたときは input と同じ値として扱う", () => {
+    const base = {
+      rewrittenTokens: 1000,
+      savedTokens: 100,
+      callsAhead: 3,
+    };
+    expect(
+      rewritePays({
+        ...base,
+        prices: { input: 0.3, cachedInput: 0.006 },
+      }),
+    ).toBe(
+      rewritePays({
+        ...base,
+        prices: { input: 0.3, cachedInput: 0.006, cacheWrite: 0.3 },
+      }),
+    );
+  });
+
+  it("Claude の書き込み料金を入れると境目が変わる", () => {
+    const args = {
+      rewrittenTokens: 100,
+      savedTokens: 100,
+      callsAhead: 10,
+    };
+    expect(
+      rewritePays({
+        ...args,
+        prices: { input: 2, cachedInput: 0.2 },
+      }),
+    ).toBe(true);
+    expect(
+      rewritePays({
+        ...args,
+        prices: { input: 2, cachedInput: 0.2, cacheWrite: 2.5 },
+      }),
+    ).toBe(false);
+  });
 });

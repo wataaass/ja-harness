@@ -15,7 +15,7 @@ export type ContextConfig = {
   prune: { maxTokens: number; headTokens: number; tailTokens: number };
   overflowRetries: number;
   mode: "price" | "always";
-  prices?: { input: number; cachedInput: number };
+  prices?: { input: number; cachedInput: number; cacheWrite?: number };
   minCallsAhead: number;
 };
 
