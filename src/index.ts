@@ -2,8 +2,11 @@
 import { randomUUID } from "node:crypto";
 import { runTurn } from "./agent/loop.js";
 import { SYSTEM_PROMPT } from "./agent/prompt.js";
+import { createRepeatTracker } from "./agent/repeat.js";
 import { readConfig } from "./cli/config.js";
 import { formatUsage } from "./cli/usage.js";
+import { createContextManager, DEFAULT_CONTEXT } from "./context/manager.js";
+import { createEstimator } from "./context/tokens.js";
 import { createClient } from "./llm/openai.js";
 import type { Message } from "./llm/types.js";
 import { formatVersion } from "./version.js";
@@ -35,10 +38,16 @@ async function main(): Promise<number> {
   }
 
   const instruction = args.join(" ");
-  const config = readConfig(process.env);
+  const { contextWindow, ...clientConfig } = readConfig(process.env);
   const client = createClient({
-    ...config,
+    ...clientConfig,
     headers: { "x-opencode-session": randomUUID() },
+  });
+  const estimate = createEstimator();
+  const manager = createContextManager({
+    config: { ...DEFAULT_CONTEXT, contextWindow },
+    complete: client.complete,
+    estimate,
   });
 
   const messages: Message[] = [
@@ -56,9 +65,19 @@ async function main(): Promise<number> {
       tools: [],
       messages,
       signal: controller.signal,
+      context: {
+        manager,
+        overflowRetries: DEFAULT_CONTEXT.overflowRetries,
+      },
+      repeat: createRepeatTracker(),
       onEvent: (event) => {
         if (event.type === "text") {
           process.stdout.write(event.text);
+        } else if (event.type === "context") {
+          const label = event.action === "prune" ? "切り詰め" : "要約";
+          process.stderr.write(
+            `（文脈: ${label} ${event.savedTokens} トークン減）\n`,
+          );
         }
       },
     });

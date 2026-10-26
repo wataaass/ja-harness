@@ -6,6 +6,7 @@ describe("readConfig", () => {
     expect(readConfig({})).toEqual({
       baseUrl: "https://opencode.ai/zen/go/v1",
       model: "deepseek-v4.1-flash",
+      contextWindow: 1048576,
     });
   });
 
@@ -21,6 +22,7 @@ describe("readConfig", () => {
       baseUrl: "https://example.test/v1",
       model: "my-model",
       apiKey: "mine",
+      contextWindow: 1048576,
     });
   });
 
@@ -29,6 +31,7 @@ describe("readConfig", () => {
       baseUrl: "https://opencode.ai/zen/go/v1",
       model: "deepseek-v4.1-flash",
       apiKey: "other",
+      contextWindow: 1048576,
     });
   });
 
@@ -41,5 +44,26 @@ describe("readConfig", () => {
   it("apiKey がないときは入れない", () => {
     const config = readConfig({});
     expect("apiKey" in config).toBe(false);
+  });
+
+  it("JA_HARNESS_CONTEXT_WINDOW を整数として読む", () => {
+    expect(
+      readConfig({ JA_HARNESS_CONTEXT_WINDOW: "12345" }).contextWindow,
+    ).toBe(12345);
+  });
+
+  it("正の整数でなければ既定値を使う", () => {
+    expect(readConfig({ JA_HARNESS_CONTEXT_WINDOW: "0" }).contextWindow).toBe(
+      1048576,
+    );
+    expect(readConfig({ JA_HARNESS_CONTEXT_WINDOW: "-1" }).contextWindow).toBe(
+      1048576,
+    );
+    expect(readConfig({ JA_HARNESS_CONTEXT_WINDOW: "abc" }).contextWindow).toBe(
+      1048576,
+    );
+    expect(readConfig({ JA_HARNESS_CONTEXT_WINDOW: "1.5" }).contextWindow).toBe(
+      1048576,
+    );
   });
 });

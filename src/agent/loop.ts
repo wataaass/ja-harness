@@ -1,4 +1,7 @@
+import type { createContextManager, StepPrep } from "../context/manager.js";
+import { isContextOverflow } from "../context/overflow.js";
 import type { Completion, Message, ToolSpec, Usage } from "../llm/types.js";
+import type { RepeatTracker } from "./repeat.js";
 
 export type Tool = ToolSpec & {
   execute: (args: unknown, signal?: AbortSignal) => Promise<string>;
@@ -19,7 +22,8 @@ export type LoopEvent =
   | { type: "reasoning"; text: string }
   | { type: "tool-start"; name: string; args: unknown }
   | { type: "tool-end"; name: string; result: string; isError: boolean }
-  | { type: "step-end"; usage: Usage };
+  | { type: "step-end"; usage: Usage }
+  | { type: "context"; action: "prune" | "summary"; savedTokens: number };
 
 export type RunOptions = {
   complete: Complete;
@@ -28,6 +32,11 @@ export type RunOptions = {
   maxSteps?: number;
   onEvent?: (e: LoopEvent) => void;
   signal?: AbortSignal;
+  context?: {
+    manager: ReturnType<typeof createContextManager>;
+    overflowRetries: number;
+  };
+  repeat?: RepeatTracker;
 };
 
 export type RunResult = {
@@ -62,7 +71,7 @@ function addUsage(total: Usage, usage: Usage): void {
 }
 
 export async function runTurn(opts: RunOptions): Promise<RunResult> {
-  const { complete, tools, messages, onEvent, signal } = opts;
+  const { complete, tools, messages, onEvent, signal, context, repeat } = opts;
   const maxSteps = opts.maxSteps ?? 30;
   const specs: ToolSpec[] = tools.map(({ name, description, parameters }) => ({
     name,
@@ -76,14 +85,69 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
     reasoning: 0,
   };
   let steps = 0;
+  let reportedTokens: number | undefined;
+  let overflowRetriesUsed = 0;
+
+  repeat?.reset();
+
+  function applyPrep(prep: StepPrep): void {
+    for (const action of prep.actions) {
+      onEvent?.({
+        type: "context",
+        action: action.action,
+        savedTokens: action.savedTokens,
+      });
+    }
+    if (prep.usage !== undefined) {
+      addUsage(usage, prep.usage);
+    }
+  }
 
   while (true) {
-    const completion = await complete(messages, specs, {
-      onText: (text) => onEvent?.({ type: "text", text }),
-      onReasoning: (text) => onEvent?.({ type: "reasoning", text }),
-      signal,
-    });
+    let completion: Completion;
+    while (true) {
+      if (context !== undefined) {
+        const prep = await context.manager.beforeStep(
+          messages,
+          specs,
+          reportedTokens,
+          signal,
+        );
+        applyPrep(prep);
+      }
+
+      try {
+        completion = await complete(messages, specs, {
+          onText: (text) => onEvent?.({ type: "text", text }),
+          onReasoning: (text) => onEvent?.({ type: "reasoning", text }),
+          signal,
+        });
+        break;
+      } catch (error) {
+        if (signal?.aborted) {
+          throw error;
+        }
+        if (
+          context !== undefined &&
+          isContextOverflow(error) &&
+          overflowRetriesUsed < context.overflowRetries
+        ) {
+          overflowRetriesUsed += 1;
+          const prep = await context.manager.onOverflow(
+            messages,
+            specs,
+            signal,
+          );
+          applyPrep(prep);
+          if (prep.actions.length > 0) {
+            continue;
+          }
+        }
+        throw error;
+      }
+    }
     steps += 1;
+    reportedTokens = completion.usage.input + completion.usage.output;
 
     messages.push(completion.message);
     addUsage(usage, completion.usage);
@@ -121,6 +185,13 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
             result = `Error: ${errorMessage(error)}`;
             isError = true;
           }
+        }
+      }
+
+      if (parsed.error === undefined) {
+        const note = repeat?.record(call.name, parsed.args);
+        if (note !== null && note !== undefined) {
+          result = `${result}\n\n${note}`;
         }
       }
 

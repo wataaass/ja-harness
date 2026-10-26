@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Complete, LoopEvent, Tool } from "../src/agent/loop.js";
 import { runTurn } from "../src/agent/loop.js";
+import { createRepeatTracker } from "../src/agent/repeat.js";
+import type { StepPrep } from "../src/context/manager.js";
 import type {
   Completion,
   Message,
@@ -66,6 +68,79 @@ function fakeComplete(completions: Completion[]): {
     return result;
   };
   return { complete, calls };
+}
+
+function fakeCompleteSequence(items: (Completion | Error)[]): {
+  complete: Complete;
+  calls: { messages: Message[] }[];
+} {
+  const calls: { messages: Message[] }[] = [];
+  const complete: Complete = async (messages) => {
+    calls.push({ messages: structuredClone(messages) });
+    const item = items[calls.length - 1];
+    if (item === undefined) {
+      throw new Error("想定より多く complete が呼ばれた");
+    }
+    if (item instanceof Error) {
+      throw item;
+    }
+    return item;
+  };
+  return { complete, calls };
+}
+
+type BeforeCall = { messages: Message[]; reported: number | undefined };
+
+function stubManager(
+  beforePreps: StepPrep[] = [],
+  overflowPreps: StepPrep[] = [],
+): {
+  manager: {
+    beforeStep: (
+      messages: Message[],
+      tools: ToolSpec[],
+      reportedTokens: number | undefined,
+      signal?: AbortSignal,
+    ) => Promise<StepPrep>;
+    onOverflow: (
+      messages: Message[],
+      tools: ToolSpec[],
+      signal?: AbortSignal,
+    ) => Promise<StepPrep>;
+  };
+  before: BeforeCall[];
+  overflowCalls: number;
+} {
+  const before: BeforeCall[] = [];
+  const state = { overflowCalls: 0 };
+  return {
+    manager: {
+      async beforeStep(
+        messages: Message[],
+        _tools: ToolSpec[],
+        reportedTokens: number | undefined,
+        _signal?: AbortSignal,
+      ): Promise<StepPrep> {
+        before.push({
+          messages: structuredClone(messages),
+          reported: reportedTokens,
+        });
+        return beforePreps.shift() ?? { actions: [] };
+      },
+      async onOverflow(
+        _messages: Message[],
+        _tools: ToolSpec[],
+        _signal?: AbortSignal,
+      ): Promise<StepPrep> {
+        state.overflowCalls += 1;
+        return overflowPreps.shift() ?? { actions: [] };
+      },
+    },
+    before,
+    get overflowCalls() {
+      return state.overflowCalls;
+    },
+  };
 }
 
 describe("runTurn", () => {
@@ -336,5 +411,208 @@ describe("runTurn", () => {
     expect(second.length).toBeGreaterThan(first.length);
     expect(second.slice(0, first.length)).toEqual(first);
     expect(messages.slice(0, first.length)).toEqual(first);
+  });
+
+  it("beforeStep を毎回呼び、reportedTokens は直前の usage から来る", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const noop = tool("noop", async () => "ok");
+    const stub = stubManager();
+    const { complete } = fakeComplete([
+      completion(
+        assistantMessage("", [{ id: "call-1", name: "noop", arguments: "{}" }]),
+        usage(1, 2, 3, 4),
+      ),
+      completion(assistantMessage("終わり"), usage(10, 20, 30, 40)),
+    ]);
+
+    const result = await runTurn({
+      complete,
+      tools: [noop],
+      messages,
+      context: { manager: stub.manager, overflowRetries: 1 },
+    });
+
+    expect(result.steps).toBe(2);
+    expect(stub.before).toHaveLength(2);
+    expect(stub.before.map((call) => call.reported)).toEqual([undefined, 4]);
+  });
+
+  it("context のイベントを出し、要約の usage を合計に足す", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const stub = stubManager([
+      {
+        usage: usage(100, 200, 300, 400, 0.5),
+        actions: [{ action: "summary", savedTokens: 50 }],
+      },
+    ]);
+    const { complete } = fakeComplete([
+      completion(assistantMessage("終わり"), usage(1, 2, 3, 4, 0.25)),
+    ]);
+    const events: LoopEvent[] = [];
+
+    const result = await runTurn({
+      complete,
+      tools: [],
+      messages,
+      context: { manager: stub.manager, overflowRetries: 1 },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(events).toContainEqual({
+      type: "context",
+      action: "summary",
+      savedTokens: 50,
+    });
+    expect(result.usage).toEqual({
+      input: 101,
+      cachedInput: 202,
+      output: 303,
+      reasoning: 404,
+      cost: 0.75,
+    });
+  });
+
+  it("あふれのエラーで onOverflow を呼び、1回だけ再送する", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const stub = stubManager(
+      [],
+      [
+        {
+          usage: usage(5, 6, 7, 8),
+          actions: [{ action: "prune", savedTokens: 10 }],
+        },
+      ],
+    );
+    const { complete, calls } = fakeCompleteSequence([
+      new Error("maximum context length exceeded"),
+      completion(assistantMessage("終わり"), usage(1, 2, 3, 4)),
+    ]);
+    const events: LoopEvent[] = [];
+
+    const result = await runTurn({
+      complete,
+      tools: [],
+      messages,
+      context: { manager: stub.manager, overflowRetries: 1 },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.stop).toBe("done");
+    expect(result.steps).toBe(1);
+    expect(calls).toHaveLength(2);
+    expect(stub.overflowCalls).toBe(1);
+    expect(events).toContainEqual({
+      type: "context",
+      action: "prune",
+      savedTokens: 10,
+    });
+    expect(result.usage).toEqual({
+      input: 6,
+      cachedInput: 8,
+      output: 10,
+      reasoning: 12,
+    });
+  });
+
+  it("再送してもあふれたら投げる", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const stub = stubManager(
+      [],
+      [{ actions: [{ action: "prune", savedTokens: 10 }] }],
+    );
+    const { complete, calls } = fakeCompleteSequence([
+      new Error("context_length_exceeded"),
+      new Error("prompt is too long"),
+    ]);
+
+    await expect(
+      runTurn({
+        complete,
+        tools: [],
+        messages,
+        context: { manager: stub.manager, overflowRetries: 1 },
+      }),
+    ).rejects.toThrow("prompt is too long");
+    expect(calls).toHaveLength(2);
+    expect(stub.overflowCalls).toBe(1);
+  });
+
+  it("あふれでないエラーはそのまま投げる", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const stub = stubManager();
+    const { complete } = fakeCompleteSequence([new Error("network down")]);
+
+    await expect(
+      runTurn({
+        complete,
+        tools: [],
+        messages,
+        context: { manager: stub.manager, overflowRetries: 1 },
+      }),
+    ).rejects.toThrow("network down");
+    expect(stub.overflowCalls).toBe(0);
+    expect(stub.before).toHaveLength(1);
+  });
+
+  it("くり返しの注意が3回目の道具の結果の末尾に付く", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const noop = tool("noop", async () => "ok");
+    const call = (id: string): ToolCall => ({
+      id,
+      name: "noop",
+      arguments: '{"a":1}',
+    });
+    const { complete } = fakeComplete([
+      completion(
+        assistantMessage("", [call("1"), call("2"), call("3")]),
+        usage(),
+      ),
+      completion(assistantMessage("終わり"), usage()),
+    ]);
+
+    await runTurn({
+      complete,
+      tools: [noop],
+      messages,
+      repeat: createRepeatTracker(),
+    });
+
+    const results = messages
+      .filter((message) => message.role === "tool")
+      .map((message) => message.content);
+    expect(results).toHaveLength(3);
+    expect(results[0]).toBe("ok");
+    expect(results[1]).toBe("ok");
+    expect(results[2]?.startsWith("ok\n\n")).toBe(true);
+    expect(results[2]).toContain(
+      "you called the same tool with the same arguments again",
+    );
+  });
+
+  it("runTurn の最初に reset して数え直す", async () => {
+    const tracker = createRepeatTracker();
+    tracker.record("noop", { a: 1 });
+    tracker.record("noop", { a: 1 });
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const noop = tool("noop", async () => "ok");
+    const { complete } = fakeComplete([
+      completion(
+        assistantMessage("", [
+          { id: "call-1", name: "noop", arguments: '{"a":1}' },
+        ]),
+        usage(),
+      ),
+      completion(assistantMessage("終わり"), usage()),
+    ]);
+
+    await runTurn({
+      complete,
+      tools: [noop],
+      messages,
+      repeat: tracker,
+    });
+
+    const toolMessage = messages.find((message) => message.role === "tool");
+    expect(toolMessage?.content).toBe("ok");
   });
 });
