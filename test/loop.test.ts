@@ -615,4 +615,83 @@ describe("runTurn", () => {
     const toolMessage = messages.find((message) => message.role === "tool");
     expect(toolMessage?.content).toBe("ok");
   });
+
+  it("limitResult は成功した結果にだけかかり、道具も渡る", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const ok: Tool = {
+      ...tool("ok", async () => "success"),
+      maxResultTokens: 12,
+    };
+    const boom = tool("boom", async () => {
+      throw new Error("failed");
+    });
+    const seen: { text: string; tool: Tool | undefined }[] = [];
+    const { complete } = fakeComplete([
+      completion(
+        assistantMessage("", [
+          { id: "ok", name: "ok", arguments: "{}" },
+          { id: "boom", name: "boom", arguments: "{}" },
+          { id: "missing", name: "missing", arguments: "{}" },
+          { id: "bad", name: "ok", arguments: "{oops" },
+        ]),
+        usage(),
+      ),
+      completion(assistantMessage("終わり"), usage()),
+    ]);
+
+    await runTurn({
+      complete,
+      tools: [ok, boom],
+      messages,
+      limitResult: (text, used) => {
+        seen.push({ text, tool: used });
+        return `short(${text})`;
+      },
+    });
+
+    const results = messages
+      .filter((message) => message.role === "tool")
+      .map((message) => message.content);
+    expect(results[0]).toBe("short(success)");
+    expect(results[1]).toBe("Error: failed");
+    expect(results[2]).toBe('Error: unknown tool "missing"');
+    expect(results[3]).toMatch(/^Error: invalid JSON arguments: /);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.text).toBe("success");
+    expect(seen[0]?.tool?.name).toBe("ok");
+    expect(seen[0]?.tool?.maxResultTokens).toBe(12);
+  });
+
+  it("くり返しの注意は短くしたあとに付く", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const noop = tool("noop", async () => "ok");
+    const call = (id: string): ToolCall => ({
+      id,
+      name: "noop",
+      arguments: "{}",
+    });
+    const { complete } = fakeComplete([
+      completion(
+        assistantMessage("", [call("1"), call("2"), call("3")]),
+        usage(),
+      ),
+      completion(assistantMessage("終わり"), usage()),
+    ]);
+
+    await runTurn({
+      complete,
+      tools: [noop],
+      messages,
+      repeat: createRepeatTracker(),
+      limitResult: (text) => `[short]${text}`,
+    });
+
+    const results = messages
+      .filter((message) => message.role === "tool")
+      .map((message) => message.content);
+    expect(results[2]?.startsWith("[short]ok\n\n")).toBe(true);
+    expect(results[2]).toContain(
+      "you called the same tool with the same arguments again",
+    );
+  });
 });

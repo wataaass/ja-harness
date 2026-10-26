@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { join, relative } from "node:path";
 import { runTurn } from "./agent/loop.js";
 import { SYSTEM_PROMPT } from "./agent/prompt.js";
 import { createRepeatTracker } from "./agent/repeat.js";
 import { readConfig } from "./cli/config.js";
 import { formatUsage } from "./cli/usage.js";
 import { createContextManager, DEFAULT_CONTEXT } from "./context/manager.js";
+import { createFileSaver, limitToolResult } from "./context/spill.js";
 import { createEstimator } from "./context/tokens.js";
 import { createClient } from "./llm/openai.js";
 import type { Message } from "./llm/types.js";
@@ -44,6 +46,8 @@ async function main(): Promise<number> {
     headers: { "x-opencode-session": randomUUID() },
   });
   const estimate = createEstimator();
+  const saver = createFileSaver(join(process.cwd(), ".ja-harness", "out"));
+  const save = (text: string) => relative(process.cwd(), saver(text));
   const manager = createContextManager({
     config: { ...DEFAULT_CONTEXT, contextWindow },
     complete: client.complete,
@@ -70,6 +74,12 @@ async function main(): Promise<number> {
         overflowRetries: DEFAULT_CONTEXT.overflowRetries,
       },
       repeat: createRepeatTracker(),
+      limitResult: (text, tool) =>
+        limitToolResult(text, {
+          maxTokens: tool?.maxResultTokens ?? 2000,
+          estimate,
+          save,
+        }),
       onEvent: (event) => {
         if (event.type === "text") {
           process.stdout.write(event.text);

@@ -5,6 +5,7 @@ import type { RepeatTracker } from "./repeat.js";
 
 export type Tool = ToolSpec & {
   execute: (args: unknown, signal?: AbortSignal) => Promise<string>;
+  maxResultTokens?: number;
 };
 
 export type Complete = (
@@ -37,6 +38,7 @@ export type RunOptions = {
     overflowRetries: number;
   };
   repeat?: RepeatTracker;
+  limitResult?: (text: string, tool: Tool | undefined) => string;
 };
 
 export type RunResult = {
@@ -165,6 +167,7 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
 
       let result: string;
       let isError: boolean;
+      let usedTool: Tool | undefined;
 
       if (parsed.error !== undefined) {
         result = `Error: invalid JSON arguments: ${parsed.error}`;
@@ -175,6 +178,7 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
           result = `Error: unknown tool "${call.name}"`;
           isError = true;
         } else {
+          usedTool = tool;
           try {
             result = await tool.execute(args, signal);
             isError = false;
@@ -186,6 +190,10 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
             isError = true;
           }
         }
+      }
+
+      if (!isError && opts.limitResult !== undefined) {
+        result = opts.limitResult(result, usedTool);
       }
 
       if (parsed.error === undefined) {
