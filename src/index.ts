@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { runTurn } from "./agent/loop.js";
 import { SYSTEM_PROMPT } from "./agent/prompt.js";
 import { createRepeatTracker } from "./agent/repeat.js";
+import { runBenchCli } from "./bench/cli.js";
 import { readConfig } from "./cli/config.js";
 import { createTerminalConfirm } from "./cli/confirm.js";
 import { formatToolStart } from "./cli/events.js";
@@ -24,6 +25,7 @@ const HELP = `使い方: ja-harness "<指示>"
 オプション:
   --help       この使い方を出す
   --version    バージョンを出す
+  bench        品質と料金を測る（ja-harness bench --help）
 
 環境変数:
   JA_HARNESS_BASE_URL   API の URL
@@ -41,6 +43,9 @@ async function main(): Promise<number> {
   if (args.length === 0 || (args.length === 1 && args[0] === "--version")) {
     process.stdout.write(`${formatVersion()}\n`);
     return 0;
+  }
+  if (args[0] === "bench") {
+    return runBenchCli(args.slice(1));
   }
 
   const instruction = args.join(" ");
