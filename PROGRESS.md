@@ -4,6 +4,7 @@
 
 ## 今の状態
 - main: 最初のコミット（README・CLAUDE.md・DECISIONS.md・LICENSE）
+- PR（claude/scaffold、下書き）: 確認の仕組みの雛形。`npm run check` が通る
 - PR #1（claude/design-ui、下書き）: v0.1 の設計。コードはまだない
   - `docs/design/ui.md`: 画面（流れる形＋状態の行）、3つのモード、差分での確認、`/undo`、入力（IME の Enter）、`/` コマンド、セッションの保存、言語
   - `docs/design/context.md`: 往復、価格で決める masking、要約（64Kか上限の50%）、道具の結果の上限、キャッシュを壊さない決まりと hit 率の表示、そのほかの削減18項目、言語の設定、文字のそろえ方、設定ファイルの例
@@ -11,9 +12,8 @@
   - `docs/research/reports/ハーネスのトークン削減技術.md`: 調査レポート（メモは `docs/research/research_notes/`）
 
 ## 次にやること
-1. 確認の仕組みの雛形（package.json、TypeScript、Biome、Vitest、`npm run check`）を DeepSeek に作ってもらう。OpenCode Go の5時間の上限が戻ってから
-2. DSH の URL を本人から受け取り、取り入れるものを設計に足す
-3. 測定（最小）の課題5件を選ぶ（`docs/design/context.md` の「測定（最小）」）
+1. DSH の URL を本人から受け取り、取り入れるものを設計に足す
+2. 測定（最小）の課題5件を選ぶ（`docs/design/context.md` の「測定（最小）」）
 
 ## 覚えておくこと
 - 目的は料金の最適化（トークンの数ではない）。DeepSeek V4.1 Flash は cache hit が miss の約50分の1
