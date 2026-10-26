@@ -1,0 +1,5 @@
+{
+  "id": "gen-lru-cache",
+  "kind": "generate",
+  "prompt": "`src/cache.js` に LRU キャッシュを作り、`src/index.js` から `LRUCache` を export してください。\n\n- `new LRUCache(capacity, { ttlMs = 0 } = {})` で作る\n- `capacity` は1以上の整数。違えば `RangeError` を投げる。`ttlMs` は0以上の数（0 は期限なし）\n- `get(key)` は値を返し、その項目を「最近使った」扱いにする。ない・期限切れなら `undefined`\n- `set(key, value)` は値を入れる。同じキーの更新は size を増やさず、最近使った扱いにする。TTL は set した時点から数え直す\n- `delete(key)` は消せたら `true`、なければ `false`\n- `size` は今の件数。容量を超えたら最も使われていない項目を消す\n- 期限切れの項目は `get` や `size` を見たときに取り除く\n- `get` では TTL を延ばさない\n\n`npm test` のキャッシュのテストも通るようにしてください。"
+}

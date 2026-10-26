@@ -1,0 +1,5 @@
+{
+  "id": "gen-cli-args",
+  "kind": "generate",
+  "prompt": "`src/args.js` に、コマンドライン引数を読む `parseArgs(argv, spec)` を作ってください。\n\nspec はオプション名をキーにしたオブジェクトで、`type`（`string` / `number` / `boolean`）、`alias`（短い名前）、`default` を持てます。例:\n\n```js\nconst spec = {\n  name: { type: \"string\", alias: \"n\", default: \"world\" },\n  verbose: { type: \"boolean\", alias: \"v\", default: false },\n  count: { type: \"number\", alias: \"c\" },\n};\nparseArgs([\"--name\", \"Alice\", \"-v\", \"--count=3\", \"--\", \"--literal\"], spec);\n// => { options: { name: \"Alice\", verbose: true, count: 3 }, positional: [\"--literal\"] }\n```\n\n- `--name value` と `--name=value` の両方を受ける\n- 短い名前は `-v`。真偽値なら `-abc` のようにまとめてもよい\n- 真偽値は `--flag` で true、`--flag=false` で false\n- `--` より後ろはすべて位置引数（`positional`）\n- `number` は数値に変換し、数値でなければエラー\n- 値を取るオプションの次が `-` で始まっていても、その値をそのまま使う\n- 知らないオプション、値がない場合は Error を投げる。メッセージにそのオプション名を含める\n- 同じオプションが複数あれば最後を使う。既定値は指定がなければ options に入れる\n- 戻り値は `{ options, positional }`\n\n`npm test` のテストも通るようにしてください。"
+}

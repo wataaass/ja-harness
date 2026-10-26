@@ -1,0 +1,5 @@
+{
+  "id": "sample-add",
+  "kind": "fix",
+  "prompt": "files/math.js の add が引き算になっています。足し算に直してください。"
+}

@@ -1,0 +1,5 @@
+{
+  "id": "gen-slugify",
+  "kind": "generate",
+  "prompt": "`src/text.js` に、URL 用の slug を作る関数を足してください。\n\n- `slugify(text, { maxLength })` の形で export する\n- 英字は小文字にし、アクセント記号（é など）は外す\n- 英数字以外の連続は1つのハイフンにまとめ、前後のハイフンは消す\n- 日本語や絵文字は残さない（ローマ字にはしない）\n- `maxLength` を指定したら、その長さを超えないようにする。単語の途中では切らず、入りきらない単語は丸ごと落とす。ただし1語だけで超える場合は先頭から `maxLength` 文字に切る\n- `maxLength` が0以下なら空文字を返す。指定がなければ切らない\n- 例: `slugify('Café au lait')` → `'cafe-au-lait'`、`slugify('the quick brown fox', { maxLength: 12 })` → `'the-quick'`、`slugify('日本語')` → `''`\n\n`npm test` の slug のテストも通るようにしてください。"
+}
