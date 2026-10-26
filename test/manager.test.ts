@@ -6,6 +6,7 @@ import {
   summaryThreshold,
 } from "../src/context/manager.js";
 import type { Estimator } from "../src/context/tokens.js";
+import { estimateMessages } from "../src/context/tokens.js";
 import type { Message, ToolSpec, Usage } from "../src/llm/types.js";
 
 const chars: Estimator = (text) => Array.from(text).length;
@@ -27,9 +28,12 @@ function config(overrides: Partial<ContextConfig> = {}): ContextConfig {
     contextWindow: 400,
     summaryMaxTokens: 64000,
     summaryMaxRatio: 0.5,
+    targetRatio: 1,
     keepRecentTokens: 10,
     prune: { maxTokens: 80, headTokens: 20, tailTokens: 20 },
     overflowRetries: 1,
+    mode: "price",
+    minCallsAhead: 3,
     ...overrides,
   };
 }
@@ -183,6 +187,44 @@ describe("createContextManager", () => {
     );
   });
 
+  it("targetRatio 0.5 では切り詰めでしきい値を下回っても target を超えたら要約する", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({ targetRatio: 0.5 }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    const prep = await manager.beforeStep(list, tools, undefined);
+
+    expect(fake.calls).toBe(1);
+    expect(prep.actions.map((action) => action.action)).toContain("summary");
+  });
+
+  it("targetRatio 0.5 では要約に渡す keepRecentTokens を target / 2 以下にする", async () => {
+    const tenths: Estimator = (text) => Math.ceil(Array.from(text).length / 10);
+    const fake = fakeComplete("x");
+    const manager = createContextManager({
+      config: config({ targetRatio: 0.5, keepRecentTokens: 1000 }),
+      complete: fake.complete,
+      estimate: tenths,
+    });
+    const list: Message[] = [{ role: "system", content: "s" }];
+    for (let i = 0; i < 25; i += 1) {
+      list.push({ role: "user", content: "u".repeat(100) });
+    }
+
+    const prep = await manager.beforeStep(list, tools, undefined);
+
+    const target = Math.floor(
+      summaryThreshold(config({ targetRatio: 0.5 })) * 0.5,
+    );
+    expect(fake.calls).toBe(1);
+    expect(prep.actions.map((action) => action.action)).toEqual(["summary"]);
+    expect(estimateMessages(list, tenths)).toBeLessThanOrEqual(target);
+  });
+
   it("切り詰めても超えたら、切り詰める前の会話で要約し、usage と差を返す", async () => {
     const fake = fakeComplete("short");
     const manager = createContextManager({
@@ -268,5 +310,106 @@ describe("createContextManager", () => {
     expect(prep.actions[0]?.action).toBe("prune");
     expect(prep.actions[0]?.savedTokens).toBeGreaterThan(0);
     expect(list[0]).toBe(first);
+  });
+
+  it("しきい値以下で得が損より小さければ書き換えない", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        prices: { input: 0.3, cachedInput: 0.006 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+    const firstTool = list[3];
+
+    const prep = await manager.beforeStep(list, tools, undefined);
+
+    expect(prep).toEqual({ actions: [] });
+    expect(list[3]).toBe(firstTool);
+    expect(fake.calls).toBe(0);
+  });
+
+  it("呼び出しが増えると料金の得が損を上回り書き換える", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        prices: { input: 0.3, cachedInput: 0.006 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    for (let i = 0; i < 100; i += 1) {
+      await manager.beforeStep(list, tools, undefined);
+    }
+
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
+      "lines pruned",
+    );
+    expect(fake.calls).toBe(0);
+  });
+
+  it("値段の差が小さければしきい値以下でも書き換える", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        prices: { input: 3, cachedInput: 0.3 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    for (let i = 0; i < 20; i += 1) {
+      await manager.beforeStep(list, tools, undefined);
+    }
+
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
+      "lines pruned",
+    );
+    expect(fake.calls).toBe(0);
+  });
+
+  it("prices がなければしきい値以下では書き換えない", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({ contextWindow: 10000 }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+    const firstTool = list[3];
+
+    const prep = await manager.beforeStep(list, tools, undefined);
+
+    expect(prep).toEqual({ actions: [] });
+    expect(list[3]).toBe(firstTool);
+  });
+
+  it("しきい値を超えたら料金を見ずに切り詰める", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 400,
+        prices: { input: 0.3, cachedInput: 0.006 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    const prep = await manager.beforeStep(list, tools, undefined);
+
+    expect(fake.calls).toBe(0);
+    expect(prep.actions.map((action) => action.action)).toEqual(["prune"]);
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
+      "lines pruned",
+    );
   });
 });

@@ -1,5 +1,6 @@
 import type { Complete } from "../agent/loop.js";
 import type { Message, ToolSpec, Usage } from "../llm/types.js";
+import { rewritePays } from "./price.js";
 import { pruneToolResults } from "./prune.js";
 import { summarize } from "./summary.js";
 import type { Estimator } from "./tokens.js";
@@ -9,17 +10,24 @@ export type ContextConfig = {
   contextWindow: number;
   summaryMaxTokens: number;
   summaryMaxRatio: number;
+  targetRatio: number;
   keepRecentTokens: number;
   prune: { maxTokens: number; headTokens: number; tailTokens: number };
   overflowRetries: number;
+  mode: "price" | "always";
+  prices?: { input: number; cachedInput: number };
+  minCallsAhead: number;
 };
 
 export const DEFAULT_CONTEXT: Omit<ContextConfig, "contextWindow"> = {
   summaryMaxTokens: 64000,
   summaryMaxRatio: 0.5,
+  targetRatio: 1,
   keepRecentTokens: 20000,
   prune: { maxTokens: 4000, headTokens: 2000, tailTokens: 500 },
   overflowRetries: 1,
+  mode: "price",
+  minCallsAhead: 3,
 };
 
 export function summaryThreshold(c: ContextConfig): number {
@@ -54,6 +62,17 @@ export function createContextManager(o: {
 } {
   const { config, complete, estimate } = o;
   const threshold = summaryThreshold(config);
+  const target = Math.floor(threshold * config.targetRatio);
+  let calls = 0;
+
+  function firstRewrittenIndex(before: Message[], after: Message[]): number {
+    for (let i = 0; i < after.length; i += 1) {
+      if (after[i] !== before[i]) {
+        return i;
+      }
+    }
+    return -1;
+  }
 
   function pressure(
     messages: Message[],
@@ -94,6 +113,7 @@ export function createContextManager(o: {
     messages: Message[],
     tools: ToolSpec[],
     actions: ContextAction[],
+    keepRecentTokens: number,
     signal?: AbortSignal,
   ): Promise<{ usage?: Usage; applied: boolean }> {
     const before = estimateMessages(messages, estimate);
@@ -101,7 +121,7 @@ export function createContextManager(o: {
       complete,
       messages,
       tools,
-      keepRecentTokens: config.keepRecentTokens,
+      keepRecentTokens,
       estimate,
       signal,
     });
@@ -116,8 +136,36 @@ export function createContextManager(o: {
 
   return {
     async beforeStep(messages, tools, reportedTokens, signal) {
+      calls += 1;
       const actions: ContextAction[] = [];
       if (pressure(messages, reportedTokens) <= threshold) {
+        const prices = config.prices;
+        if (config.mode === "always" || prices === undefined) {
+          return { actions };
+        }
+
+        const pruned = pruneToolResults(messages, pruneOptions());
+        if (pruned.pruned === 0) {
+          return { actions };
+        }
+        const first = firstRewrittenIndex(messages, pruned.messages);
+        if (first === -1) {
+          return { actions };
+        }
+        const rewrittenTokens = estimateMessages(
+          pruned.messages.slice(first),
+          estimate,
+        );
+        if (
+          rewritePays({
+            rewrittenTokens,
+            savedTokens: pruned.savedTokens,
+            callsAhead: Math.max(config.minCallsAhead, calls),
+            prices,
+          })
+        ) {
+          applyPrune(messages, pruned, actions);
+        }
         return { actions };
       }
 
@@ -126,12 +174,22 @@ export function createContextManager(o: {
         estimateMessages(pruned.messages, estimate),
         (reportedTokens ?? 0) - pruned.savedTokens,
       );
-      if (prunedPressure <= threshold) {
+      if (prunedPressure <= target) {
         applyPrune(messages, pruned, actions);
         return { actions };
       }
 
-      const result = await summarizeStep(messages, tools, actions, signal);
+      const keepRecentTokens = Math.min(
+        config.keepRecentTokens,
+        Math.floor(target / 2),
+      );
+      const result = await summarizeStep(
+        messages,
+        tools,
+        actions,
+        keepRecentTokens,
+        signal,
+      );
       if (result.applied) {
         applyPrune(
           messages,
@@ -149,7 +207,13 @@ export function createContextManager(o: {
     async onOverflow(messages, tools, signal) {
       const actions: ContextAction[] = [];
       prune(messages, actions);
-      const result = await summarizeStep(messages, tools, actions, signal);
+      const result = await summarizeStep(
+        messages,
+        tools,
+        actions,
+        config.keepRecentTokens,
+        signal,
+      );
       return result.usage === undefined
         ? { actions }
         : { usage: result.usage, actions };
