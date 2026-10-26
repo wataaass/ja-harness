@@ -61,12 +61,12 @@ LLM-Summary のしきい値（64K か上限の50%）は、料金ではなく質�
 | 5 | 振り分け: 要約・subagent・地図づくりは、安いモデル（設定の `models.light`）で行う | 常に |
 | 6 | シェル出力の掃除: 色の制御文字、進捗表示、同じ行のくり返しを除く。効果はうたい文句ほど大きくないという実測があるので、測定で確かめる | 常に |
 | 7 | くり返しの検出: 同じ道具を同じ引数で3回呼んだら、モデルに知らせて止める | 常に |
-| 8 | モデル向けの文は英語: system prompt・道具の説明・隠した跡の1行・要約の指示は英語にする。画面と応答は日本語。日本語は英語の約1.34倍のトークンになるため | 常に |
+| 8 | モデル向けの文は英語（`language.modelFacing`）: system prompt・道具の説明・隠した跡の1行・要約の指示は英語にする。画面と応答は日本語。日本語は英語の約1.34倍のトークンになるため | 常に |
 
 ## さらに足す工夫（調査レポート `docs/research/reports/ハーネスのトークン削減技術.md` から）
 | # | やり方 |
 | --- | --- |
-| 9 | 考えるのは英語、答えは日本語: system prompt で、推論（thinking）は英語で、利用者への答えは日本語で書くよう指示する。推論トークンは出力の大半を占め、日本語は英語の約1.34倍のトークンになるため |
+| 9 | 考えるのは英語、答えは日本語（`language.thinking`・`language.reply`）: system prompt で、推論（thinking）は英語で、利用者への答えは日本語で書くよう指示する。推論トークンは出力の大半を占め、日本語は英語の約1.34倍のトークンになるため |
 | 10 | 並列の道具の呼び出し: 読み取り系（read・grep・list）は並列で実行し、結果は1つの message にまとめて返す。書き込みとシェルは順に実行する |
 | 11 | まとめる道具: `read` は複数のパスを、`edit` は1ファイルへの複数の置換を受け取る。`grep` は前後の行つきで返す |
 | 12 | 編集のあとの自動の lint・型チェック: 結果を短くして編集の結果に添える。置換は緩く適用し（空白と字下げをそろえて合わせる）、失敗したら近い候補の行を返す |
@@ -79,6 +79,30 @@ LLM-Summary のしきい値（64K か上限の50%）は、料金ではなく質�
 
 見送るもの: LLMLingua-2 など token 単位の圧縮、関連度で毎回選び直す方式、過去の書き換えを毎回行う方式（AgentDiet 型）、Predicted Outputs と fast-apply、code mode、学習した圧縮器。トークンか料金が増えた報告があるか、sandbox や学習が要るため。
 
+## 言語
+言語は役割ごとに分けて設定できる。既定は、人が読むものは日本語、モデルだけが読むものは英語（料金が安いため）。
+
+| 設定 | 既定 | 対象 |
+| --- | --- | --- |
+| `language.ui` | `ja` | 画面の文（状態の行、確認、エラー、`/help`） |
+| `language.reply` | `ja` | モデルの利用者への答え |
+| `language.thinking` | `en` | モデルの推論（thinking）。system prompt で指示する |
+| `language.modelFacing` | `en` | system prompt、道具の説明、隠した跡の1行、要約の指示と要約そのもの |
+
+`reply` と `thinking` を同じにしたいとき（推論を読みたいときなど）は、`thinking` を `ja` にする。料金は上がるので、`/context` に差の目安を出す。
+
+## 文字のそろえ方（日本語1文字あたりの料金を下げる）
+| 設定 | 既定 | 動き |
+| --- | --- | --- |
+| `text.halfWidthAlnum` | true | ハーネスが作る文（跡、要約、エラー、確認）の数字と英字を半角にする。モデルにも「数字と英字は半角で」と指示する。全角の数字は最大2.5倍、英字は4〜8倍のトークンになるため |
+| `text.noFullWidthSpace` | true | ハーネスが作る文に全角の空白を使わない（Gemma 系で1字3トークン） |
+| `text.rawUnicodeJson` | true | JSON で日本語を `\uXXXX` に逃がさず、そのまま書く（逃がすと約4倍） |
+
+利用者のファイルの中身と、道具が返す結果の本文は変えない。そろえるのはハーネス自身が作る文と、モデルへの指示だけ。
+
+## モデルごとの日本語の料金
+`/model` の一覧に、モデルごとの「日本語1文字あたりの料金」を出す。値は、価格表の単価 × そのモデルの日本語1文字あたりのトークン数（`prices` の `jaTokensPerChar`。既定は実測した表から入れ、セッションの usage と文字数から更新する）。日本語に強いトークナイザーほど同じ文章が安くなる（日本語÷英語のトークン数の実測: Gemma 3 は1.21倍、DeepSeek-V3 は1.42倍、o200k は1.66倍、旧 Claude は2.13倍。wataaass/nihongo-kit の調査メモ）。
+
 ## 設定
 上の値はすべて設定ファイルで変えられる。作業フォルダの `.ja-harness/config.json` が、ホームの `~/.ja-harness/config.json` より優先される。
 
@@ -90,16 +114,16 @@ LLM-Summary のしきい値（64K か上限の50%）は、料金ではなく質�
     "maxTurns": 30,
     "toolResultMaxTokens": 2000,
     "fileReadMaxTokens": 8000,
-    "thinkingLanguage": "en",
     "thinkingEffort": { "plan": "high", "default": "low" },
     "repoMapMaxTokens": 1000,
     "repeatLimit": 3,
-    "cleanShellOutput": true,
-    "modelFacingLanguage": "en"
+    "cleanShellOutput": true
   },
+  "language": { "ui": "ja", "reply": "ja", "thinking": "en", "modelFacing": "en" },
+  "text": { "halfWidthAlnum": true, "noFullWidthSpace": true, "rawUnicodeJson": true },
   "models": { "main": "deepseek-v4.1-flash", "light": "deepseek-v4.1-flash" },
   "prices": {
-    "deepseek-v4.1-flash": { "input": 0.15, "cachedInput": 0.003, "cacheWrite": 0.15, "output": 0.6 }
+    "deepseek-v4.1-flash": { "input": 0.15, "cachedInput": 0.003, "cacheWrite": 0.15, "output": 0.6, "jaTokensPerChar": 0.7 }
   }
 }
 ```
