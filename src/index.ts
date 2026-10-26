@@ -5,17 +5,21 @@ import { runTurn } from "./agent/loop.js";
 import { SYSTEM_PROMPT } from "./agent/prompt.js";
 import { createRepeatTracker } from "./agent/repeat.js";
 import { readConfig } from "./cli/config.js";
+import { createTerminalConfirm } from "./cli/confirm.js";
+import { formatToolStart } from "./cli/events.js";
 import { formatUsage } from "./cli/usage.js";
 import { createContextManager, DEFAULT_CONTEXT } from "./context/manager.js";
 import { createFileSaver, limitToolResult } from "./context/spill.js";
 import { createEstimator } from "./context/tokens.js";
 import { createClient } from "./llm/openai.js";
 import type { Message } from "./llm/types.js";
+import { createTools } from "./tools/index.js";
 import { formatVersion } from "./version.js";
 
 const HELP = `使い方: ja-harness "<指示>"
 
 1回だけ指示を送って答えを受け取ります。
+ファイルの編集・作成とコマンドの実行は、その前に確認します。
 
 オプション:
   --help       この使い方を出す
@@ -66,7 +70,15 @@ async function main(): Promise<number> {
   try {
     const result = await runTurn({
       complete: client.complete,
-      tools: [],
+      tools: createTools(
+        process.cwd(),
+        createTerminalConfirm({
+          input: process.stdin,
+          output: process.stderr,
+          isTTY: process.stdin.isTTY === true,
+          onInterrupt: () => controller.abort(),
+        }),
+      ),
       messages,
       signal: controller.signal,
       context: {
@@ -83,6 +95,11 @@ async function main(): Promise<number> {
       onEvent: (event) => {
         if (event.type === "text") {
           process.stdout.write(event.text);
+        } else if (event.type === "tool-start") {
+          process.stderr.write(`${formatToolStart(event.name, event.args)}\n`);
+        } else if (event.type === "tool-end" && event.isError) {
+          const firstLine = event.result.split(/\r?\n/)[0] ?? "";
+          process.stderr.write(`  ✗ ${firstLine.slice(0, 80)}\n`);
         } else if (event.type === "context") {
           const label = event.action === "prune" ? "切り詰め" : "要約";
           process.stderr.write(

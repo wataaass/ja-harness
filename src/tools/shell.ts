@@ -192,12 +192,15 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
 
       const firstLine = args.command.split(/\r?\n/)[0] ?? "";
       const shown = firstLine.slice(0, 80);
+      const isSingleLine = !/[\r\n]/.test(args.command);
+      const detail =
+        isSingleLine && args.command.length <= 80 ? "" : args.command;
 
       signal?.throwIfAborted();
       const accepted = await confirm({
         tool: "shell",
         title: `コマンドを実行します: ${shown}`,
-        detail: args.command,
+        detail,
       });
       if (!accepted) {
         return "The user declined this command. Ask what they want instead.";

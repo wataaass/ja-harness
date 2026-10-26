@@ -82,7 +82,35 @@ describe("shell", () => {
     expect(confirm).toHaveBeenCalledWith({
       tool: "shell",
       title: "コマンドを実行します: echo hi",
-      detail: "echo hi",
+      detail: "",
+    });
+  });
+
+  it("80文字を超える1行は detail に全文を出す", async () => {
+    const cwd = setup();
+    const confirm = vi.fn<Confirm>(async () => true);
+    const command = `echo ${"a".repeat(81)}`;
+
+    await createShellTool(cwd, confirm).execute({ command });
+
+    expect(confirm).toHaveBeenCalledWith({
+      tool: "shell",
+      title: `コマンドを実行します: ${command.slice(0, 80)}`,
+      detail: command,
+    });
+  });
+
+  it("複数行なら detail に全文を出す", async () => {
+    const cwd = setup();
+    const confirm = vi.fn<Confirm>(async () => true);
+    const command = "echo a\necho b";
+
+    await createShellTool(cwd, confirm).execute({ command });
+
+    expect(confirm).toHaveBeenCalledWith({
+      tool: "shell",
+      title: "コマンドを実行します: echo a",
+      detail: command,
     });
   });
 
