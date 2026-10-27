@@ -17,10 +17,9 @@ export function renderCard(o: {
   }
 
   const inner = width - 4;
-  const title = truncate(o.title, Math.max(0, width - 5));
-  const titleWidth = stringWidth(title);
-  const topRule = "─".repeat(Math.max(0, width - 5 - titleWidth));
-  const lines = [theme.accent(`╭─ ${title} ${topRule}╮`)];
+  const top =
+    o.title === "" ? `╭${"─".repeat(width - 2)}╮` : topLine(o.title, width);
+  const lines = [theme.accent(top)];
 
   for (const body of o.body) {
     const content = padEnd(truncate(body, inner), inner);
@@ -30,11 +29,13 @@ export function renderCard(o: {
   if (o.footer === undefined) {
     lines.push(theme.accent(`╰${"─".repeat(width - 2)}╯`));
   } else {
-    const footer = truncate(o.footer, Math.max(0, width - 5));
-    const footerWidth = stringWidth(footer);
-    const bottomRule = "─".repeat(Math.max(0, width - 5 - footerWidth));
+    const footer = truncate(o.footer, Math.max(0, width - 4));
+    const used = 3 + stringWidth(footer);
+    const remain = width - used - 1;
+    const tail =
+      remain > 1 ? ` ${"─".repeat(remain - 1)}╯` : remain === 1 ? "─╯" : "╯";
     lines.push(
-      `${theme.accent("╰─ ")}${theme.dim(footer)}${theme.accent(` ${bottomRule}╯`)}`,
+      `${theme.accent("╰─ ")}${theme.dim(footer)}${theme.accent(tail)}`,
     );
   }
 
@@ -61,4 +62,12 @@ function renderNarrow(o: {
     );
   }
   return lines;
+}
+
+function topLine(title: string, width: number): string {
+  const text = truncate(title, Math.max(0, width - 4));
+  const remain = width - 3 - stringWidth(text) - 1;
+  const tail =
+    remain > 1 ? ` ${"─".repeat(remain - 1)}╮` : remain === 1 ? "─╮" : "╮";
+  return `╭─ ${text}${tail}`;
 }

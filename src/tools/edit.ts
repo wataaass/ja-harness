@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Tool } from "../agent/loop.js";
-import type { Confirm } from "./confirm.js";
+import { type Confirm, toDecision } from "./confirm.js";
 import { formatDiff } from "./diff.js";
 import { displayPath, resolvePath } from "./path.js";
 
@@ -298,6 +298,11 @@ function parseEdit(value: unknown, index: number): Edit {
   };
 }
 
+function declined(message: string, reason: string | undefined): string {
+  const text = reason?.trim() ?? "";
+  return text === "" ? message : `${message}\nReason from the user: ${text}`;
+}
+
 export function createEditTool(cwd: string, confirm: Confirm): Tool {
   return {
     name: "edit",
@@ -365,13 +370,18 @@ export function createEditTool(cwd: string, confirm: Confirm): Tool {
       const { text: updated, changed } = applyEdits(normalized, edits);
 
       signal?.throwIfAborted();
-      const accepted = await confirm({
-        tool: "edit",
-        title: `${path} を編集します`,
-        detail: formatDiff(path, normalized, updated),
-      });
-      if (!accepted) {
-        return "The user declined this edit. Ask what they want instead.";
+      const decision = toDecision(
+        await confirm({
+          tool: "edit",
+          title: `${path} を編集します`,
+          detail: formatDiff(path, normalized, updated),
+        }),
+      );
+      if (!decision.allow) {
+        return declined(
+          "The user declined this edit. Ask what they want instead.",
+          decision.reason,
+        );
       }
 
       signal?.throwIfAborted();

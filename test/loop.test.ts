@@ -694,4 +694,65 @@ describe("runTurn", () => {
       "you called the same tool with the same arguments again",
     );
   });
+
+  it("道具の結果を足したあとに drainInput を呼び、返った発言を足す", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const noop = tool("noop", async () => "ok");
+    const { complete, calls } = fakeComplete([
+      completion(
+        assistantMessage("", [{ id: "call-1", name: "noop", arguments: "{}" }]),
+        usage(),
+      ),
+      completion(assistantMessage("終わり"), usage()),
+    ]);
+    const events: LoopEvent[] = [];
+    const delivered: Message[] = [{ role: "user", content: "追加" }];
+    let drains = 0;
+
+    const result = await runTurn({
+      complete,
+      tools: [noop],
+      messages,
+      drainInput: () => {
+        drains += 1;
+        return delivered;
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.stop).toBe("done");
+    expect(drains).toBe(1);
+    expect(events).toContainEqual({ type: "input-delivered", count: 1 });
+    expect(messages).toContain(delivered[0]);
+    expect(calls[1]?.messages.at(-1)).toEqual({
+      role: "user",
+      content: "追加",
+    });
+    expect(calls[1]?.messages.at(-2)).toEqual({
+      role: "tool",
+      toolCallId: "call-1",
+      content: "ok",
+    });
+  });
+
+  it("道具を呼ばずに終わったら drainInput を呼ばない", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const { complete } = fakeComplete([
+      completion(assistantMessage("終わり"), usage()),
+    ]);
+    let drains = 0;
+
+    await runTurn({
+      complete,
+      tools: [],
+      messages,
+      drainInput: () => {
+        drains += 1;
+        return [{ role: "user", content: "追加" }];
+      },
+    });
+
+    expect(drains).toBe(0);
+    expect(messages).toHaveLength(2);
+  });
 });

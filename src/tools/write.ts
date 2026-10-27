@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Tool } from "../agent/loop.js";
-import type { Confirm } from "./confirm.js";
+import { type Confirm, toDecision } from "./confirm.js";
 import { displayPath, resolvePath } from "./path.js";
 
 const DETAIL_LINES = 40;
@@ -19,6 +19,11 @@ function toLines(text: string): string[] {
     lines.pop();
   }
   return lines;
+}
+
+function declined(message: string, reason: string | undefined): string {
+  const text = reason?.trim() ?? "";
+  return text === "" ? message : `${message}\nReason from the user: ${text}`;
 }
 
 export function createWriteTool(cwd: string, confirm: Confirm): Tool {
@@ -65,13 +70,18 @@ export function createWriteTool(cwd: string, confirm: Confirm): Tool {
       }
 
       signal?.throwIfAborted();
-      const accepted = await confirm({
-        tool: "write",
-        title: `${path} を作ります（${lines.length}行）`,
-        detail,
-      });
-      if (!accepted) {
-        return "The user declined this write. Ask what they want instead.";
+      const decision = toDecision(
+        await confirm({
+          tool: "write",
+          title: `${path} を作ります（${lines.length}行）`,
+          detail,
+        }),
+      );
+      if (!decision.allow) {
+        return declined(
+          "The user declined this write. Ask what they want instead.",
+          decision.reason,
+        );
       }
 
       signal?.throwIfAborted();

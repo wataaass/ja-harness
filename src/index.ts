@@ -15,11 +15,14 @@ import { createEstimator } from "./context/tokens.js";
 import { createClient } from "./llm/openai.js";
 import type { Message } from "./llm/types.js";
 import { createTools } from "./tools/index.js";
-import { formatVersion } from "./version.js";
+import { runApp } from "./ui/app.js";
+import { formatVersion, VERSION } from "./version.js";
 
-const HELP = `使い方: ja-harness "<指示>"
+const HELP = `使い方: ja-harness
+        ja-harness "<指示>"
 
-1回だけ指示を送って答えを受け取ります。
+引数なしで起動すると対話を始めます。
+"<指示>" を渡すと、1回だけ指示を送って答えを受け取ります。
 ファイルの編集・作成とコマンドの実行は、その前に確認します。
 
 オプション:
@@ -40,7 +43,29 @@ async function main(): Promise<number> {
     process.stdout.write(HELP);
     return 0;
   }
-  if (args.length === 0 || (args.length === 1 && args[0] === "--version")) {
+  if (args.length === 0) {
+    if (process.stdin.isTTY === true && process.stdout.isTTY === true) {
+      const { contextWindow, ...clientConfig } = readConfig(process.env);
+      const client = createClient({
+        ...clientConfig,
+        headers: { "x-opencode-session": randomUUID() },
+      });
+      return runApp({
+        input: process.stdin,
+        output: process.stdout,
+        env: process.env,
+        cwd: process.cwd(),
+        home: process.env.HOME,
+        complete: client.complete,
+        contextWindow,
+        model: clientConfig.model,
+        version: VERSION,
+      });
+    }
+    process.stdout.write(`${formatVersion()}\n`);
+    return 0;
+  }
+  if (args.length === 1 && args[0] === "--version") {
     process.stdout.write(`${formatVersion()}\n`);
     return 0;
   }

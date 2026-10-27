@@ -57,6 +57,34 @@ describe("renderCard", () => {
     expect(lines[0]).toContain("38;2;91;141;184");
   });
 
+  it("見出しが空なら上の辺は線だけにする", () => {
+    const lines = renderCard({
+      title: "",
+      body: ["本文"],
+      width: 60,
+      theme: plain,
+    });
+    expect(lines[0]).toBe(`╭${"─".repeat(58)}╮`);
+    expect(stringWidth(lines[0] ?? "")).toBe(60);
+  });
+
+  it("長い見出しと footer は切り詰めて角の前に空白を残さない", () => {
+    const lines = renderCard({
+      title: "あ".repeat(100),
+      body: ["本文"],
+      footer: "い".repeat(100),
+      width: 60,
+      theme: plain,
+    });
+    for (const line of lines) {
+      expect(stringWidth(line)).toBe(60);
+    }
+    expect(lines[0]).toContain("…");
+    expect(lines.at(-1)).toContain("…");
+    expect(lines[0]).not.toMatch(/ ╮$/);
+    expect(lines.at(-1)).not.toMatch(/ ╯$/);
+  });
+
   it("footer がなければ下の辺は線だけ", () => {
     const lines = renderCard({
       title: "見出し",

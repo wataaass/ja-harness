@@ -51,6 +51,14 @@ describe("renderStatus", () => {
     expect(stringWidth(line)).toBeLessThanOrEqual(30);
   });
 
+  it("1%未満の文脈は <1% と出す", () => {
+    expect(status({ contextRatio: 0.004 })).toContain("文脈 <1%");
+  });
+
+  it("文脈が0なら 0% と出す", () => {
+    expect(status({ contextRatio: 0 })).toContain("文脈 0%");
+  });
+
   it("小さい料金も有効数字2桁程度で出す", () => {
     expect(status({ cost: 0.0004 })).toContain("0.0004ドル");
   });

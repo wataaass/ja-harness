@@ -24,6 +24,7 @@ export type LoopEvent =
   | { type: "tool-start"; name: string; args: unknown }
   | { type: "tool-end"; name: string; result: string; isError: boolean }
   | { type: "step-end"; usage: Usage }
+  | { type: "input-delivered"; count: number }
   | { type: "context"; action: "prune" | "summary"; savedTokens: number };
 
 export type RunOptions = {
@@ -39,6 +40,7 @@ export type RunOptions = {
   };
   repeat?: RepeatTracker;
   limitResult?: (text: string, tool: Tool | undefined) => string;
+  drainInput?: () => Message[];
 };
 
 export type RunResult = {
@@ -209,6 +211,12 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
 
     if (steps >= maxSteps) {
       return { stop: "max-steps", steps, usage };
+    }
+
+    if (opts.drainInput !== undefined) {
+      const delivered = opts.drainInput();
+      messages.push(...delivered);
+      onEvent?.({ type: "input-delivered", count: delivered.length });
     }
   }
 }

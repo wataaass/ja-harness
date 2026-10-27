@@ -79,3 +79,23 @@ describe("write", () => {
     expect(request?.detail).toContain("…ほか5行");
   });
 });
+
+describe("write の却下の理由", () => {
+  it("理由を結果の末尾に付ける", async () => {
+    const cwd = setup();
+    const confirm = vi.fn<Confirm>(async () => ({
+      allow: false,
+      reason: "名前を変えて",
+    }));
+
+    const result = await createWriteTool(cwd, confirm).execute({
+      path: "a.txt",
+      content: "x\n",
+    });
+
+    expect(result).toBe(
+      "The user declined this write. Ask what they want instead.\nReason from the user: 名前を変えて",
+    );
+    expect(existsSync(join(cwd, "a.txt"))).toBe(false);
+  });
+});

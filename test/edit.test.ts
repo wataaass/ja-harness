@@ -189,3 +189,23 @@ describe("edit tool", () => {
     expect(lines[lines.length - 1]).toBe("…");
   });
 });
+
+describe("edit tool の却下の理由", () => {
+  it("理由を結果の末尾に付ける", async () => {
+    const cwd = setup({ "a.txt": "a\nb\n" });
+    const confirm = vi.fn<Confirm>(async () => ({
+      allow: false,
+      reason: "別の直し方にして",
+    }));
+
+    const result = await createEditTool(cwd, confirm).execute({
+      path: "a.txt",
+      edits: [{ oldText: "b", newText: "B" }],
+    });
+
+    expect(result).toBe(
+      "The user declined this edit. Ask what they want instead.\nReason from the user: 別の直し方にして",
+    );
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("a\nb\n");
+  });
+});

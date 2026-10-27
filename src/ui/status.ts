@@ -29,7 +29,10 @@ export function renderStatus(o: {
   });
   segments.push({
     key: "context",
-    text: `文脈 ${Math.round(o.contextRatio * 100)}%`,
+    text:
+      o.contextRatio > 0 && o.contextRatio < 0.01
+        ? "文脈 <1%"
+        : `文脈 ${Math.round(o.contextRatio * 100)}%`,
   });
   segments.push({
     key: "cost",

@@ -226,3 +226,22 @@ describe("shell", () => {
     );
   });
 });
+
+describe("shell の却下の理由", () => {
+  it("理由を結果の末尾に付ける", async () => {
+    const cwd = setup();
+    const confirm = vi.fn<Confirm>(async () => ({
+      allow: false,
+      reason: "本番では実行しないで",
+    }));
+
+    const result = await createShellTool(cwd, confirm).execute({
+      command: "echo x > side.txt",
+    });
+
+    expect(result).toBe(
+      "The user declined this command. Ask what they want instead.\nReason from the user: 本番では実行しないで",
+    );
+    expect(existsSync(join(cwd, "side.txt"))).toBe(false);
+  });
+});

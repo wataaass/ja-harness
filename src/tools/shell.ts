@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Tool } from "../agent/loop.js";
-import type { Confirm } from "./confirm.js";
+import { type Confirm, toDecision } from "./confirm.js";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escapes are intentional
 const ANSI = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])/g;
@@ -149,6 +149,11 @@ function run(
   });
 }
 
+function declined(message: string, reason: string | undefined): string {
+  const text = reason?.trim() ?? "";
+  return text === "" ? message : `${message}\nReason from the user: ${text}`;
+}
+
 export function createShellTool(cwd: string, confirm: Confirm): Tool {
   return {
     name: "shell",
@@ -197,13 +202,18 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
         isSingleLine && args.command.length <= 80 ? "" : args.command;
 
       signal?.throwIfAborted();
-      const accepted = await confirm({
-        tool: "shell",
-        title: `コマンドを実行します: ${shown}`,
-        detail,
-      });
-      if (!accepted) {
-        return "The user declined this command. Ask what they want instead.";
+      const decision = toDecision(
+        await confirm({
+          tool: "shell",
+          title: `コマンドを実行します: ${shown}`,
+          detail,
+        }),
+      );
+      if (!decision.allow) {
+        return declined(
+          "The user declined this command. Ask what they want instead.",
+          decision.reason,
+        );
       }
 
       const result = await run(args.command, cwd, timeoutSeconds, signal);
