@@ -201,7 +201,7 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
         description: {
           type: "string",
           description:
-            "What this command does, in one short phrase in Japanese. Shown to the user when asking permission.",
+            'Shown to the user when asking permission. Say what the command does in plain English, starting with a verb. Keep simple commands to 3-8 words, e.g. ls -> "List files in this folder", npm test -> "Run the tests", git log -5 -> "Show the last 5 commits". For a long or unclear command, name its goal, e.g. "Find TODO comments in src".',
         },
         timeoutSeconds: {
           type: "integer",
