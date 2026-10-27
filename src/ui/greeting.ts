@@ -1,4 +1,5 @@
 import { formatCost } from "./format.js";
+import { getMessages, type Messages } from "./i18n/index.js";
 import type { Theme } from "./theme.js";
 import { truncate } from "./width.js";
 
@@ -28,13 +29,20 @@ export function renderGreeting(o: {
   last?: { cost: number; cacheRatio: number };
   theme: Theme;
   width: number;
+  messages?: Messages;
 }): string[] {
-  const model = o.effort ? `${o.model}（${o.effort}）` : o.model;
+  const messages = o.messages ?? getMessages();
+  const model = o.effort
+    ? messages.modelWithEffort(o.model, o.effort)
+    : o.model;
   const first = ` ${o.theme.accent(`ja-harness ${o.version}`)}${o.theme.dim("   ")}${model}${o.theme.dim("   ")}${displayCwd(o.cwd, o.home)}`;
 
-  const help = o.theme.dim("/help で使い方");
+  const help = o.theme.dim(messages.greeting.help);
   const second = o.last
-    ? ` 前回のセッション ${formatCost(o.last.cost)}・キャッシュ ${Math.round(o.last.cacheRatio * 100)}%${o.theme.dim("   ")}${help}`
+    ? ` ${messages.greeting.lastSession(
+        formatCost(o.last.cost, messages),
+        Math.round(o.last.cacheRatio * 100),
+      )}${o.theme.dim("   ")}${help}`
     : ` ${help}`;
 
   return [truncate(first, o.width), truncate(second, o.width)];

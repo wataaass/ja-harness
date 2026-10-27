@@ -1,4 +1,5 @@
 import { formatCost } from "./format.js";
+import { getMessages, type Messages } from "./i18n/index.js";
 import { renderMeter } from "./meter.js";
 import type { Theme } from "./theme.js";
 import { stringWidth, truncate } from "./width.js";
@@ -15,28 +16,30 @@ export function renderStatus(o: {
   warn?: boolean;
   theme: Theme;
   width: number;
+  messages?: Messages;
 }): string {
+  const messages = o.messages ?? getMessages();
   const segments: { key: string; text: string }[] = [
     { key: "mode", text: o.theme.accent(o.mode) },
     { key: "permission", text: o.permission },
   ];
   if (o.queued !== undefined && o.queued > 0) {
-    segments.push({ key: "queued", text: `待ち ${o.queued}件` });
+    segments.push({ key: "queued", text: messages.status.queued(o.queued) });
   }
   segments.push({
     key: "model",
-    text: o.effort ? `${o.model}（${o.effort}）` : o.model,
+    text: o.effort ? messages.modelWithEffort(o.model, o.effort) : o.model,
   });
   segments.push({
     key: "context",
     text:
       o.contextRatio > 0 && o.contextRatio < 0.01
-        ? "文脈 <1%"
-        : `文脈 ${Math.round(o.contextRatio * 100)}%`,
+        ? messages.status.contextSmall
+        : messages.status.context(Math.round(o.contextRatio * 100)),
   });
   segments.push({
     key: "cost",
-    text: `${formatCost(o.cost)} ${renderMeter(o.cacheRatio, o.theme, { warn: o.warn })}`,
+    text: `${formatCost(o.cost, messages)} ${renderMeter(o.cacheRatio, o.theme, { warn: o.warn })}`,
   });
 
   const build = () =>

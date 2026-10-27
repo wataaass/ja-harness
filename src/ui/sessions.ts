@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import type { Message, Usage } from "../llm/types.js";
+import { getMessages, type Messages } from "./i18n/index.js";
 
 export type SessionMeta = {
   type: "meta";
@@ -126,6 +127,7 @@ export function createSessionWriter(
   dir: string,
   metaInput: SessionMetaInput,
   requestedPath?: string,
+  messages: Messages = getMessages(),
 ): SessionWriter {
   const meta = normalizeMeta(metaInput);
   let path = requestedPath ?? join(dir, sessionFileName(meta));
@@ -161,7 +163,7 @@ export function createSessionWriter(
       return undefined;
     }
     warned = true;
-    return `セッションを保存できません: ${errorMessage(failure)}`;
+    return messages.session.saveError(errorMessage(failure));
   }
 
   ensure();

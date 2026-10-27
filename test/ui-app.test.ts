@@ -407,6 +407,46 @@ describe("runApp", () => {
     expect(last).toEqual({ role: "user", content: "追加の指示" });
   });
 
+  it("作業中で入力欄が空なら ↑ で待ち行列の最後を呼び戻す", async () => {
+    let release: (() => void) | undefined;
+    const first = new Promise<Completion>((resolve) => {
+      release = () => resolve(call("read", { paths: ["a.ts"] }));
+    });
+    let count = 0;
+    const calls: Message[][] = [];
+    const complete: Complete = async (messages, _tools, cb) => {
+      calls.push(structuredClone(messages));
+      count += 1;
+      if (count === 1) {
+        return first;
+      }
+      cb?.onText("受け取りました");
+      return answer("受け取りました");
+    };
+    const { input, output, result } = start({
+      complete,
+      createTools: () => [readTool()],
+    });
+
+    input.send("start\r");
+    await waitFor(output, "考えています");
+    input.send("追加1\r");
+    input.send("追加2\r");
+    await waitFor(output, "待ち 2件");
+    input.send("\x1b[A");
+    await waitFor(output, "│ › 追加2");
+    release?.();
+    await waitFor(output, "受け取りました");
+
+    input.send("\x03");
+    expect(await close(input, output, result)).toBe(0);
+    const users = (calls[1] ?? [])
+      .filter((message) => message.role === "user")
+      .map((message) => message.content);
+    expect(users).toContain("追加1");
+    expect(users).not.toContain("追加2");
+  });
+
   it("作業中の Esc で止まる", async () => {
     const complete: Complete = (_messages, _tools, cb) =>
       new Promise((_resolve, reject) => {
@@ -804,6 +844,46 @@ describe("runApp の追加機能", () => {
       { model: "deepseek-v4.1-flash", effort: "high" },
       { model: "deepseek-v4-pro", effort: "medium" },
     ]);
+  });
+
+  it("料金の段の手前で1回だけ知らせる", async () => {
+    const items = [
+      answer("first", usage(95000, 0, 10)),
+      answer("second", usage(96000, 0, 10)),
+    ];
+    const complete: Complete = async (_messages, _tools, cb) => {
+      const item = items.shift();
+      if (item === undefined) {
+        throw new Error("想定より多く complete が呼ばれた");
+      }
+      cb?.onText(item.message.content);
+      return item;
+    };
+    const { input, output, result } = start({
+      complete,
+      model: "claude-haiku-5-5",
+    });
+
+    input.send("one\r");
+    await waitFor(output, "first");
+    await waitFor(output, "文脈が 90k を超えました");
+    await waitFor(output, "100k を超えると、次から単価が5倍になります");
+    input.send("two\r");
+    await waitFor(output, "second");
+    expect(await close(input, output, result)).toBe(0);
+
+    const text = stripAnsi(output.text);
+    expect(text.match(/文脈が 90k を超えました/g)).toHaveLength(1);
+  });
+
+  it("料金の段がないモデルでは知らせない", async () => {
+    const { complete } = sequence([answer("first", usage(95000, 0, 10))]);
+    const { input, output, result } = start({ complete });
+
+    input.send("one\r");
+    await waitFor(output, "first");
+    expect(await close(input, output, result)).toBe(0);
+    expect(stripAnsi(output.text)).not.toContain("文脈が 90k を超えました");
   });
 
   it("/details で道具の結果の先頭を出す", async () => {

@@ -37,6 +37,7 @@ import { applyKey, type EditorState, renderEditor } from "./editor.js";
 import { formatCost, formatTokens, formatTurnSummary } from "./format.js";
 import { renderGreeting } from "./greeting.js";
 import { createHistory } from "./history.js";
+import { getMessages, type Messages } from "./i18n/index.js";
 import {
   type DecoderState,
   decodeKeys,
@@ -46,7 +47,6 @@ import {
 } from "./keys.js";
 import {
   blockedToolMessage,
-  MODE_LABELS,
   MODES,
   type Mode,
   modeAllowsTool,
@@ -57,7 +57,6 @@ import {
 } from "./modes.js";
 import {
   needsConfirm,
-  PERMISSION_LABELS,
   PERMISSIONS,
   type Permission,
   parsePermission,
@@ -108,6 +107,7 @@ export type AppOptions = {
   resume?: string;
   continueLatest?: boolean;
   prices?: { input: number; cachedInput: number; cacheWrite?: number };
+  lang?: string;
   timing?: {
     escape?: number;
     doubleEscape?: number;
@@ -158,28 +158,21 @@ const DEFAULT_TIMING = {
   exit: 2000,
 };
 
-const COMMANDS: Command[] = [
-  { name: "/help", description: "キーとコマンドの一覧" },
-  { name: "/mode", description: "モードを選ぶ" },
-  { name: "/permission", description: "権限を選ぶ" },
-  { name: "/model", description: "モデルと推論の量を選ぶ" },
-  { name: "/details", description: "途中経過の見せ方を切り替える" },
-  { name: "/undo", description: "変更を戻す" },
-  { name: "/resume", description: "前のセッションを続ける" },
-  { name: "/clear", description: "会話を空にする" },
-  { name: "/compact", description: "会話を要約して短くする" },
-  { name: "/summarize", description: "/compact と同じ" },
-  { name: "/context", description: "文脈の内訳を見る" },
-];
-
-const HELP_LINES = [
-  " キー",
-  "  Enter 送る  Shift+Enter か Ctrl+J 改行  ↑↓ 前の入力",
-  "  Shift+Tab モード  Ctrl+O 途中経過  Ctrl+R 変更の見直し  Ctrl+C 入力を消す  Ctrl+D 2回で終了",
-  "  Esc 止める・閉じる  Tab 候補を入れる",
-  " コマンド",
-  "  /help /mode /permission /model /details /undo /resume /clear /compact /summarize /context",
-];
+function commands(messages: Messages): Command[] {
+  return [
+    { name: "/help", description: messages.commands.help },
+    { name: "/mode", description: messages.commands.mode },
+    { name: "/permission", description: messages.commands.permission },
+    { name: "/model", description: messages.commands.model },
+    { name: "/details", description: messages.commands.details },
+    { name: "/undo", description: messages.commands.undo },
+    { name: "/resume", description: messages.commands.resume },
+    { name: "/clear", description: messages.commands.clear },
+    { name: "/compact", description: messages.commands.compact },
+    { name: "/summarize", description: messages.commands.summarize },
+    { name: "/context", description: messages.commands.context },
+  ];
+}
 
 function zeroUsage(): Usage {
   return { input: 0, cachedInput: 0, output: 0, reasoning: 0 };
@@ -211,9 +204,15 @@ function priceText(value: number): string {
   return String(value);
 }
 
-function modelRow(info: ModelInfo): string {
+function modelRow(info: ModelInfo, messages: Messages): string {
   const cost = costPer1kJaChars(info);
-  return `${info.label}   入${priceText(info.prices.input)} キ${priceText(info.prices.cachedInput)} 出${priceText(info.prices.output)}   和1千字 $${cost.toFixed(4)}`;
+  return messages.app.modelRow(
+    info.label,
+    priceText(info.prices.input),
+    priceText(info.prices.cachedInput),
+    priceText(info.prices.output),
+    cost.toFixed(4),
+  );
 }
 
 function sessionDate(createdAt: string): string {
@@ -228,9 +227,15 @@ function sessionDate(createdAt: string): string {
   return `${month}/${day} ${hours}:${minutes}`;
 }
 
-function sessionRow(session: SessionSummary): string {
-  const text = session.firstUser === "" ? "（空）" : session.firstUser;
-  return `${sessionDate(session.createdAt)}  ${text}  ${formatCost(session.cost)}・${session.turns}件`;
+function sessionRow(session: SessionSummary, messages: Messages): string {
+  const text =
+    session.firstUser === "" ? messages.session.empty : session.firstUser;
+  return messages.session.row(
+    sessionDate(session.createdAt),
+    text,
+    formatCost(session.cost, messages),
+    session.turns,
+  );
 }
 
 export async function runApp(o: AppOptions): Promise<number> {
@@ -240,6 +245,8 @@ export async function runApp(o: AppOptions): Promise<number> {
     env: o.env,
     isTTY: o.output.isTTY ?? o.input.isTTY ?? false,
   });
+  const messages = getMessages(o.lang ?? o.env.JA_HARNESS_LANG);
+  const commandList = commands(messages);
   const history = createHistory();
   const estimate = createEstimator();
   const saver = createFileSaver(join(o.cwd, ".ja-harness", "out"));
@@ -271,7 +278,7 @@ export async function runApp(o: AppOptions): Promise<number> {
     estimate,
   });
 
-  const messages: Message[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  const conversation: Message[] = [{ role: "system", content: SYSTEM_PROMPT }];
   const queue: QueuedInput[] = [];
   const alwaysAllowed = new Set<string>();
 
@@ -307,6 +314,7 @@ export async function runApp(o: AppOptions): Promise<number> {
   let sessionUsage = zeroUsage();
   let turnUsage = zeroUsage();
   let lastStepInput = 0;
+  const tierWarned = new Set<string>();
 
   const sessionsDir = join(o.home ?? o.cwd, ".ja-harness", "sessions");
   let sessionWriter: SessionWriter | undefined;
@@ -348,18 +356,22 @@ export async function runApp(o: AppOptions): Promise<number> {
   }
 
   function recordMessages(): void {
-    for (let index = recordedMessages; index < messages.length; index += 1) {
-      const message = messages[index];
+    for (
+      let index = recordedMessages;
+      index < conversation.length;
+      index += 1
+    ) {
+      const message = conversation[index];
       if (message !== undefined) {
         writeSession({ type: "message", message });
       }
     }
-    recordedMessages = messages.length;
+    recordedMessages = conversation.length;
   }
 
   function recordReset(): void {
-    writeSession({ type: "reset", messages: [...messages] });
-    recordedMessages = messages.length;
+    writeSession({ type: "reset", messages: [...conversation] });
+    recordedMessages = conversation.length;
   }
 
   function newSession(): void {
@@ -372,7 +384,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       createdAt,
     };
     sessionId = meta.id;
-    sessionWriter = createSessionWriter(sessionsDir, meta);
+    sessionWriter = createSessionWriter(sessionsDir, meta, undefined, messages);
     recordedMessages = 0;
     recordMessages();
   }
@@ -380,17 +392,18 @@ export async function runApp(o: AppOptions): Promise<number> {
   function applyLoadedSession(summary: SessionSummary): boolean {
     try {
       const loaded = loadSession(summary.path);
-      messages.splice(0, messages.length, ...loaded.messages);
-      if (messages.length === 0 || messages[0]?.role !== "system") {
-        messages.unshift({ role: "system", content: SYSTEM_PROMPT });
+      conversation.splice(0, conversation.length, ...loaded.messages);
+      if (conversation.length === 0 || conversation[0]?.role !== "system") {
+        conversation.unshift({ role: "system", content: SYSTEM_PROMPT });
       }
       sessionId = loaded.meta.id === "" ? summary.id : loaded.meta.id;
       sessionWriter = createSessionWriter(
         sessionsDir,
         loaded.meta,
         summary.path,
+        messages,
       );
-      recordedMessages = messages.length;
+      recordedMessages = conversation.length;
       sessionUsage = loaded.usage;
       turnUsage = zeroUsage();
       lastStepInput = 0;
@@ -432,25 +445,54 @@ export async function runApp(o: AppOptions): Promise<number> {
     }));
   }
 
+  function tierWarning(): boolean {
+    const tier = findModel(model)?.tier;
+    return tier !== undefined && lastStepInput > tier.above * 0.9;
+  }
+
+  function maybeWarnTier(input: number): void {
+    const info = findModel(model);
+    const tier = info?.tier;
+    if (info === undefined || tier === undefined) {
+      return;
+    }
+    const threshold = tier.above * 0.9;
+    if (input <= threshold || tierWarned.has(info.id)) {
+      return;
+    }
+    tierWarned.add(info.id);
+    const factor =
+      info.prices.input === 0 ? 1 : tier.prices.input / info.prices.input;
+    const factorText = String(Number(factor.toFixed(2)));
+    emit([
+      messages.app.tierWarning(
+        formatTokens(threshold),
+        formatTokens(tier.above),
+        factorText,
+      ),
+    ]);
+  }
+
   function statusLine(maxWidth: number): string {
     if (exitAskedAt !== undefined) {
-      return truncate(theme.dim(" もう一度 Ctrl+D で終了"), maxWidth);
+      return truncate(theme.dim(messages.app.exitAgain), maxWidth);
     }
     const total = totalUsage();
     const contextRatio =
       o.contextWindow > 0 ? lastStepInput / o.contextWindow : 0;
     return renderStatus({
-      mode: modeLabel(mode),
-      permission: permissionLabel(permission),
+      mode: modeLabel(mode, messages),
+      permission: permissionLabel(permission, messages),
       model,
       effort,
       contextRatio,
       cost: total.cost ?? 0,
       cacheRatio: total.input === 0 ? 0 : total.cachedInput / total.input,
       queued: queue.length,
-      warn: contextRatio >= 0.85,
+      warn: contextRatio >= 0.85 || tierWarning(),
       theme,
       width: maxWidth,
+      messages,
     });
   }
 
@@ -474,39 +516,39 @@ export async function runApp(o: AppOptions): Promise<number> {
     }
     if (current.kind === "mode") {
       const body = MODES.map((item, index) => {
-        const text = ` ${index === current.index ? "●" : " "} ${MODE_LABELS[item]}`;
+        const text = ` ${index === current.index ? "●" : " "} ${modeLabel(item, messages)}`;
         return index === current.index ? theme.accent(text) : text;
       });
       return renderCard({
-        title: "モード",
+        title: messages.app.picker.modeTitle,
         body,
-        footer: "Enter 決める  Esc やめる",
+        footer: messages.app.picker.decideFooter,
         width: maxWidth,
         theme,
       });
     }
     if (current.kind === "permission") {
       const body = PERMISSIONS.map((item, index) => {
-        const text = ` ${index === current.index ? "●" : " "} ${PERMISSION_LABELS[item]}`;
+        const text = ` ${index === current.index ? "●" : " "} ${permissionLabel(item, messages)}`;
         return index === current.index ? theme.accent(text) : text;
       });
       return renderCard({
-        title: "権限",
+        title: messages.app.picker.permissionTitle,
         body,
-        footer: "Enter 決める  Esc やめる",
+        footer: messages.app.picker.decideFooter,
         width: maxWidth,
         theme,
       });
     }
     if (current.kind === "session") {
       const body = current.sessions.map((session, index) => {
-        const text = ` ${index === current.index ? "●" : " "} ${sessionRow(session)}`;
+        const text = ` ${index === current.index ? "●" : " "} ${sessionRow(session, messages)}`;
         return index === current.index ? theme.accent(text) : text;
       });
       return renderCard({
-        title: "前のセッション",
+        title: messages.app.picker.sessionTitle,
         body,
-        footer: "↑↓ 選ぶ  Enter 決める  Esc やめる",
+        footer: messages.app.picker.sessionFooter,
         width: maxWidth,
         theme,
       });
@@ -523,8 +565,8 @@ export async function runApp(o: AppOptions): Promise<number> {
       return index === current.effortIndex ? theme.accent(text) : text;
     });
     const body: string[] = [
-      ` 推論の量  ${efforts.join("  ")}`,
-      " 単価は $/100万トークン。入=入力 キ=キャッシュの読み 出=出力",
+      ` ${messages.app.picker.effortLabel}  ${efforts.join("  ")}`,
+      ` ${messages.app.picker.priceNote}`,
     ];
     for (let index = 0; index < MODELS.length; index += 1) {
       const item = MODELS[index];
@@ -533,13 +575,13 @@ export async function runApp(o: AppOptions): Promise<number> {
       }
       const active = index === current.modelIndex;
       const marker = model === item.id ? "●" : " ";
-      const text = `${marker} ${modelRow(item)}`;
+      const text = `${marker} ${modelRow(item, messages)}`;
       body.push(active ? theme.accent(text) : text);
     }
     return renderCard({
-      title: "モデル",
+      title: messages.app.picker.modelTitle,
       body,
-      footer: "↑↓ モデル  ←→ 推論の量  Enter 決める  Esc やめる",
+      footer: messages.app.picker.modelFooter,
       width: maxWidth,
       theme,
     });
@@ -552,9 +594,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     if (plan.phase === "reason") {
       const rendered = renderEditor(plan.reason, editorWidth(maxWidth));
       return renderCard({
-        title: "直す理由",
+        title: messages.app.plan.reasonTitle,
         body: bodyLines(rendered.lines),
-        footer: "Enter 決定  Esc 戻る",
+        footer: messages.app.plan.reasonFooter,
         width: maxWidth,
         theme,
       });
@@ -562,19 +604,19 @@ export async function runApp(o: AppOptions): Promise<number> {
     const lines = plan.markdown.split(/\r?\n/);
     const body = lines.slice(0, 30);
     if (lines.length > 30) {
-      body.push(`…ほか${lines.length - 30}行`);
+      body.push(messages.app.moreLines(lines.length - 30));
     }
     return renderCard({
-      title: `計画  ${plan.path}`,
+      title: messages.app.plan.title(plan.path),
       body,
-      footer: "Enter 承認して実行  e 直す  Esc 却下",
+      footer: messages.app.plan.footer,
       width: maxWidth,
       theme,
     });
   }
 
   function editPath(title: string): string {
-    const suffix = " を編集します";
+    const suffix = messages.app.editPathSuffix;
     return title.endsWith(suffix) ? title.slice(0, -suffix.length) : title;
   }
 
@@ -612,9 +654,9 @@ export async function runApp(o: AppOptions): Promise<number> {
       const rendered = renderEditor(current.input, editorWidth(maxWidth));
       return {
         lines: renderCard({
-          title: "追加の指示",
+          title: messages.app.review.inputTitle,
           body: bodyLines(rendered.lines),
-          footer: "Enter 送る  Esc 戻る",
+          footer: messages.app.review.inputFooter,
           width: maxWidth,
           theme,
         }),
@@ -625,13 +667,17 @@ export async function runApp(o: AppOptions): Promise<number> {
     const diff = reviewDiff(file);
     const body = diff.slice(current.scroll, current.scroll + 20);
     if (body.length === 0) {
-      body.push("変更はありません");
+      body.push(messages.app.review.noChanges);
     }
     return {
       lines: renderCard({
-        title: `見直し  ${path}  ${current.index + 1}/${current.files.length}`,
+        title: messages.app.review.title(
+          path,
+          current.index + 1,
+          current.files.length,
+        ),
         body,
-        footer: "←→ ファイル  ↑↓ 読み進める  i 指示を書く  Esc 閉じる",
+        footer: messages.app.review.footer,
         width: maxWidth,
         theme,
       }),
@@ -652,9 +698,9 @@ export async function runApp(o: AppOptions): Promise<number> {
         const top = lines.length;
         lines.push(
           ...renderCard({
-            title: "却下の理由",
+            title: messages.app.rejectReason.title,
             body: bodyLines(rendered.lines),
-            footer: "Enter 決定  Esc 戻る",
+            footer: messages.app.rejectReason.footer,
             width: maxWidth,
             theme,
           }),
@@ -671,9 +717,13 @@ export async function runApp(o: AppOptions): Promise<number> {
         const index = pending.hunkIndex ?? 0;
         lines.push(
           ...renderCard({
-            title: `編集の案  ${editPath(pending.request.title)}  ${index + 1}/${hunks.length}`,
+            title: messages.app.hunk.title(
+              editPath(pending.request.title),
+              index + 1,
+              hunks.length,
+            ),
             body: hunks[index] ?? [],
-            footer: "Enter 採用  Esc 却下  a このファイルは全部  e 理由を書く",
+            footer: messages.app.hunk.footer,
             width: maxWidth,
             theme,
           }),
@@ -682,13 +732,13 @@ export async function runApp(o: AppOptions): Promise<number> {
         const detail = pending.request.detail.split(/\r?\n/);
         const body = pending.request.detail === "" ? [] : detail.slice(0, 20);
         if (detail.length > 20) {
-          body.push(`…ほか${detail.length - 20}行`);
+          body.push(messages.app.moreLines(detail.length - 20));
         }
         lines.push(
           ...renderCard({
             title: pending.request.title,
             body,
-            footer: "Enter 許可  Esc 却下  a 常に許可  e 理由を書く",
+            footer: messages.app.confirmFooter,
             width: maxWidth,
             theme,
           }),
@@ -717,9 +767,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     } else if (contextView !== undefined) {
       lines.push(
         ...renderCard({
-          title: "文脈の内訳",
+          title: messages.app.contextTitle,
           body: contextView,
-          footer: "Enter か Esc で閉じる",
+          footer: messages.app.contextFooter,
           width: maxWidth,
           theme,
         }),
@@ -727,9 +777,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     } else if (warning !== undefined) {
       lines.push(
         ...renderCard({
-          title: "権限",
+          title: messages.app.permissionTitle,
           body: modalBody([warning.text]),
-          footer: "Enter はい  Esc やめる",
+          footer: messages.app.warningFooter,
           width: maxWidth,
           theme,
         }),
@@ -738,7 +788,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       lines.push(...renderPicker(maxWidth));
     } else {
       if (thinking) {
-        lines.push(theme.dim(" 考えています…"));
+        lines.push(theme.dim(` ${messages.app.thinking}`));
       }
       if (live !== "") {
         lines.push(truncate(`  ${live}`, maxWidth));
@@ -746,7 +796,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       if (activeTool !== undefined) {
         lines.push(
           truncate(
-            ` ${toolMark(activeTool.name)}  ${activeTool.summary} …`,
+            ` ${toolMark(activeTool.name, messages)}  ${activeTool.summary} …`,
             maxWidth,
           ),
         );
@@ -824,7 +874,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       lines.push(" › ");
     }
     if (duringWork) {
-      lines[lines.length - 1] += "（作業中に送信）";
+      lines[lines.length - 1] += messages.app.duringWork;
     }
     emit(lines);
   }
@@ -855,7 +905,11 @@ export async function runApp(o: AppOptions): Promise<number> {
 
   function toggleDetails(): void {
     details = !details;
-    emit([` 途中経過: ${details ? "詳しく" : "簡潔"}`]);
+    emit([
+      messages.app.details.changed(
+        details ? messages.app.details.on : messages.app.details.off,
+      ),
+    ]);
   }
 
   function printReasoning(): void {
@@ -910,9 +964,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     if (!/^\/\S*$/.test(editor.text)) {
       return [];
     }
-    return COMMANDS.filter((command) =>
-      command.name.startsWith(editor.text),
-    ).slice(0, 8);
+    return commandList
+      .filter((command) => command.name.startsWith(editor.text))
+      .slice(0, 8);
   }
 
   function atWord(): { start: number; end: number; query: string } | undefined {
@@ -1275,7 +1329,7 @@ export async function runApp(o: AppOptions): Promise<number> {
   function openReview(): void {
     const files = checkpoints.changedFiles(0);
     if (files.length === 0) {
-      emit([" 見直す変更がありません"]);
+      emit([messages.app.reviewEmpty]);
       return;
     }
     review = {
@@ -1388,12 +1442,10 @@ export async function runApp(o: AppOptions): Promise<number> {
           return;
         }
         if (!applyLoadedSession(chosen)) {
-          emit([" セッションを読み込めません"]);
+          emit([messages.app.sessionLoadError]);
           return;
         }
-        emit([
-          ` 続きから始めます（${chosen.turns}件のやりとり）。最初の1回はキャッシュが効きません`,
-        ]);
+        emit([messages.app.sessionContinue(chosen.turns)]);
       }
       return;
     }
@@ -1470,9 +1522,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       effort = nextEffort;
       picker = undefined;
       if (changed) {
-        emit([
-          " モデルを変えました。キャッシュが効かなくなるので、次の1回は料金が高くなります",
-        ]);
+        emit([messages.app.modelChanged]);
       } else {
         render();
       }
@@ -1482,7 +1532,7 @@ export async function runApp(o: AppOptions): Promise<number> {
   function applyPermission(next: Permission): void {
     if (next === "auto-all") {
       warning = {
-        text: "シェルのコマンドも確認せずに実行します。よろしいですか？",
+        text: messages.app.autoAllWarning,
         onYes: () => {
           permission = "auto-all";
         },
@@ -1500,9 +1550,13 @@ export async function runApp(o: AppOptions): Promise<number> {
     render();
     void (async () => {
       try {
-        const before = estimateMessages(messages, estimate);
-        const prep = await manager.compactNow(messages, toolSpecs(), undefined);
-        const after = estimateMessages(messages, estimate);
+        const before = estimateMessages(conversation, estimate);
+        const prep = await manager.compactNow(
+          conversation,
+          toolSpecs(),
+          undefined,
+        );
+        const after = estimateMessages(conversation, estimate);
         if (prep.usage !== undefined) {
           sessionUsage = addUsage(sessionUsage, prep.usage);
           writeSession({ type: "usage", usage: prep.usage });
@@ -1514,10 +1568,13 @@ export async function runApp(o: AppOptions): Promise<number> {
         );
         if (prep.actions.some((action) => action.action === "summary")) {
           emit([
-            ` 要約しました: ${formatTokens(before)} → ${formatTokens(after)} トークン`,
+            messages.app.compact.done(
+              formatTokens(before),
+              formatTokens(after),
+            ),
           ]);
         } else {
-          emit([" まだ要約するほど長くありません"]);
+          emit([messages.app.compact.notNeeded]);
         }
       } catch (error) {
         if (!closed) {
@@ -1539,9 +1596,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     const specs = toolSpecs();
     const toolTokens = estimate(JSON.stringify(specs));
     let instructions = 0;
-    let conversation = 0;
+    let conversationTokens = 0;
     let results = 0;
-    for (const message of messages) {
+    for (const message of conversation) {
       let tokens = 4 + estimate(message.content);
       if (message.role === "assistant") {
         tokens += estimate(message.reasoning ?? "");
@@ -1554,10 +1611,10 @@ export async function runApp(o: AppOptions): Promise<number> {
       } else if (message.role === "tool") {
         results += tokens;
       } else {
-        conversation += tokens;
+        conversationTokens += tokens;
       }
     }
-    const total = instructions + toolTokens + conversation + results;
+    const total = instructions + toolTokens + conversationTokens + results;
     const ratio = o.contextWindow > 0 ? total / o.contextWindow : 0;
 
     const used = totalUsage();
@@ -1573,16 +1630,28 @@ export async function runApp(o: AppOptions): Promise<number> {
     const outputCost = (output * outputPrice) / 1_000_000;
 
     contextView = [
-      ` 指示（system）      ${formatTokens(instructions)} トークン`,
-      ` 道具の定義          ${formatTokens(toolTokens)} トークン`,
-      ` 会話                ${formatTokens(conversation)} トークン`,
-      ` 道具の結果          ${formatTokens(results)} トークン`,
-      ` 合計                ${formatTokens(total)} トークン（上限の ${Math.round(ratio * 100)}%）`,
-      ` 切り詰め・要約で減らした分  ${formatTokens(savedByContext)} トークン`,
-      " セッションの料金（今のモデルの単価）",
-      ` キャッシュに当たった入力  ${formatTokens(cached)} トークン  ${formatCost(cachedCost)}`,
-      ` 当たらなかった入力        ${formatTokens(uncached)} トークン  ${formatCost(uncachedCost)}`,
-      ` 出力                      ${formatTokens(output)} トークン  ${formatCost(outputCost)}`,
+      messages.app.contextView.instructions(formatTokens(instructions)),
+      messages.app.contextView.tools(formatTokens(toolTokens)),
+      messages.app.contextView.conversation(formatTokens(conversationTokens)),
+      messages.app.contextView.results(formatTokens(results)),
+      messages.app.contextView.total(
+        formatTokens(total),
+        Math.round(ratio * 100),
+      ),
+      messages.app.contextView.saved(formatTokens(savedByContext)),
+      messages.app.contextView.pricing,
+      messages.app.contextView.cachedInput(
+        formatTokens(cached),
+        formatCost(cachedCost, messages),
+      ),
+      messages.app.contextView.uncachedInput(
+        formatTokens(uncached),
+        formatCost(uncachedCost, messages),
+      ),
+      messages.app.contextView.output(
+        formatTokens(output),
+        formatCost(outputCost, messages),
+      ),
     ];
     render();
   }
@@ -1597,13 +1666,13 @@ export async function runApp(o: AppOptions): Promise<number> {
     const arg = rest.join(" ").trim();
 
     if (busy && command !== "/details" && command !== "/help") {
-      emit([" 作業が終わってから使えます"]);
+      emit([messages.app.busy]);
       return true;
     }
 
     switch (command) {
       case "/help":
-        emit(HELP_LINES);
+        emit(messages.helpLines);
         return true;
       case "/details":
         toggleDetails();
@@ -1615,19 +1684,19 @@ export async function runApp(o: AppOptions): Promise<number> {
         const undo = checkpoints.undo(count);
         const paths = [...new Set([...undo.restored, ...undo.deleted])];
         if (paths.length === 0) {
-          emit([" 戻す変更がありません"]);
+          emit([messages.app.undo.none]);
           return true;
         }
         const shown = paths.map((path) => relative(o.cwd, path) || path);
         emit([
-          ` 戻しました: ${shown.join(", ")}（${shown.length}件）`,
-          " （シェルで変えたファイルは戻りません）",
+          messages.app.undo.restored(shown.join(", "), shown.length),
+          messages.app.undo.shellNote,
         ]);
         pendingNotice = `The user undid your changes to: ${shown.join(", ")}. Read them again before editing.`;
         return true;
       }
       case "/mode": {
-        const chosen = arg === "" ? undefined : parseMode(arg);
+        const chosen = arg === "" ? undefined : parseMode(arg, messages);
         if (chosen !== undefined) {
           setMode(chosen);
         } else {
@@ -1640,7 +1709,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         return true;
       }
       case "/permission": {
-        const chosen = arg === "" ? undefined : parsePermission(arg);
+        const chosen = arg === "" ? undefined : parsePermission(arg, messages);
         if (chosen !== undefined) {
           applyPermission(chosen);
         } else {
@@ -1671,7 +1740,7 @@ export async function runApp(o: AppOptions): Promise<number> {
           (session) => session.id !== sessionId,
         );
         if (sessions.length === 0) {
-          emit([" 前のセッションがありません"]);
+          emit([messages.app.noPreviousSession]);
           return true;
         }
         picker = { kind: "session", sessions, index: 0 };
@@ -1679,7 +1748,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         return true;
       }
       case "/clear": {
-        messages.splice(0, messages.length, {
+        conversation.splice(0, conversation.length, {
           role: "system",
           content: SYSTEM_PROMPT,
         });
@@ -1687,7 +1756,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         turnUsage = zeroUsage();
         lastStepInput = 0;
         newSession();
-        emit([" 会話を空にしました（前のものは /resume で続けられます）"]);
+        emit([messages.app.cleared]);
         return true;
       }
       case "/compact":
@@ -1698,7 +1767,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         showContext();
         return true;
       default:
-        emit([` 知らないコマンドです: ${command}`]);
+        emit([messages.app.unknownCommand(command)]);
         return true;
     }
   }
@@ -1762,7 +1831,7 @@ export async function runApp(o: AppOptions): Promise<number> {
     if (key.type === "escape") {
       if (busy) {
         stopShown = true;
-        emit([" 止めました"]);
+        emit([messages.app.stopped]);
         abort?.abort();
         return;
       }
@@ -1840,6 +1909,15 @@ export async function runApp(o: AppOptions): Promise<number> {
       return;
     }
     if (action === "history-prev") {
+      if (busy && editor.text === "" && queue.length > 0) {
+        const queued = queue.pop();
+        if (queued !== undefined) {
+          editor = { text: queued.text, cursor: [...queued.text].length };
+          slashIndex = 0;
+          render();
+          return;
+        }
+      }
       const text = history.prev(editor.text);
       editor = { text, cursor: [...text].length };
       slashIndex = 0;
@@ -1947,19 +2025,24 @@ export async function runApp(o: AppOptions): Promise<number> {
         printReasoning();
         activeTool = {
           name: event.name,
-          summary: summarizeStart(event.name, event.args),
+          summary: summarizeStart(event.name, event.args, messages),
         };
         render();
         return;
       case "tool-end": {
         recordMessages();
         const start = activeTool?.summary ?? "";
-        const end = summarizeEnd(event.name, event.result, event.isError);
+        const end = summarizeEnd(
+          event.name,
+          event.result,
+          event.isError,
+          messages,
+        );
         let summary = start === "" ? event.name : start;
         if (event.isError) {
           summary = end === "" ? summary : end;
         } else if (end !== "") {
-          summary = end.startsWith("（")
+          summary = end.startsWith(messages.toolSummary.suffixStart)
             ? `${summary}${end}`
             : `${summary} ${end}`;
         }
@@ -1972,6 +2055,7 @@ export async function runApp(o: AppOptions): Promise<number> {
             failed: event.isError,
             theme,
             width: width(),
+            messages,
           }),
         ];
         if (details) {
@@ -1985,6 +2069,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         turnUsage = addUsage(turnUsage, event.usage);
         recordMessages();
         thinking = true;
+        maybeWarnTier(event.usage.input);
         render();
         return;
       case "input-delivered":
@@ -1996,7 +2081,12 @@ export async function runApp(o: AppOptions): Promise<number> {
         recordReset();
         emit([
           theme.dim(
-            ` （文脈: ${event.action === "prune" ? "切り詰め" : "要約"} ${event.savedTokens} トークン減）`,
+            messages.app.contextAction(
+              event.action === "prune"
+                ? messages.app.contextPrune
+                : messages.app.contextSummary,
+              formatTokens(event.savedTokens),
+            ),
           ),
         ]);
         return;
@@ -2026,9 +2116,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     }
     checkpoints.beginTurn();
     if (noticeText !== undefined) {
-      messages.push(notice(noticeText));
+      conversation.push(notice(noticeText));
     }
-    messages.push({ role: "user", content: text });
+    conversation.push({ role: "user", content: text });
     recordMessages();
     let usageWritten = false;
     busy = true;
@@ -2057,7 +2147,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       const result = await runTurn({
         complete: (msgs, specs, cb) => currentComplete()(msgs, specs, cb),
         tools,
-        messages,
+        messages: conversation,
         signal,
         context: {
           manager,
@@ -2091,15 +2181,18 @@ export async function runApp(o: AppOptions): Promise<number> {
           : result.usage.cachedInput / result.usage.input;
       emit([
         theme.dim(
-          ` ${formatTurnSummary({
-            tokens: result.usage.input + result.usage.output,
-            cost: result.usage.cost ?? 0,
-            cacheRatio,
-          })}`,
+          ` ${formatTurnSummary(
+            {
+              tokens: result.usage.input + result.usage.output,
+              cost: result.usage.cost ?? 0,
+              cacheRatio,
+            },
+            messages,
+          )}`,
         ),
       ]);
     } catch (error) {
-      repairMessages(messages);
+      repairMessages(conversation);
       if (closed) {
         return;
       }
@@ -2109,7 +2202,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       thinking = false;
       if (signal.aborted) {
         if (!stopShown) {
-          emit([" 止めました"]);
+          emit([messages.app.stopped]);
         }
       } else {
         emit([
@@ -2151,7 +2244,7 @@ export async function runApp(o: AppOptions): Promise<number> {
     const found = findSessionIn(knownSessions, o.resume);
     const opened = found === undefined ? false : applyLoadedSession(found);
     if (!opened) {
-      startupLines.push(` セッションが見つかりません: ${o.resume}`);
+      startupLines.push(messages.app.sessionNotFound(o.resume));
       newSession();
     }
   } else if (o.continueLatest) {
@@ -2179,6 +2272,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         : { last: { cost: previous.cost, cacheRatio: previous.cacheRatio } }),
       theme,
       width: width(),
+      messages,
     }),
     ...startupLines,
   ]);

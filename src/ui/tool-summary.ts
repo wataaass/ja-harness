@@ -1,8 +1,14 @@
+import { getMessages, type Messages } from "./i18n/index.js";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function summarizeStart(name: string, args: unknown): string {
+export function summarizeStart(
+  name: string,
+  args: unknown,
+  messages: Messages = getMessages(),
+): string {
   if (!isRecord(args)) {
     return name;
   }
@@ -37,7 +43,7 @@ export function summarizeStart(name: string, args: unknown): string {
         ? (args.command.split(/\r?\n/)[0] ?? "")
         : "";
     case "submit_plan":
-      return "計画";
+      return messages.toolSummary.plan;
     default:
       return name;
   }
@@ -47,6 +53,7 @@ export function summarizeEnd(
   name: string,
   result: string,
   isError: boolean,
+  messages: Messages = getMessages(),
 ): string {
   if (isError) {
     const first = result.split(/\r?\n/)[0] ?? "";
@@ -54,41 +61,45 @@ export function summarizeEnd(
   }
 
   if (/\bdeclined\b/i.test(result)) {
-    return "却下";
+    return messages.toolSummary.declined;
   }
 
   if (name === "edit") {
     const applied = /applied (\d+) of (\d+) hunks?/i.exec(result);
     if (applied !== null) {
-      return `一部（${applied[1]}/${applied[2]}）`;
+      return messages.toolSummary.partial(applied[1] ?? "", applied[2] ?? "");
     }
   }
 
   switch (name) {
     case "read": {
       const match = /\(lines \d+-\d+ of (\d+)\)/.exec(result);
-      return match === null ? "" : `（${match[1]}行）`;
+      return match === null ? "" : messages.toolSummary.lines(match[1] ?? "");
     }
     case "grep": {
       if (result.trim() === "No matches.") {
-        return "0件";
+        return messages.toolSummary.matches(0);
       }
       const count = result
         .split(/\r?\n/)
         .filter((line) => /^.+?:\d+:/.test(line)).length;
-      return `${count}件`;
+      return messages.toolSummary.matches(count);
     }
     case "shell": {
       const match = /\[exit code (\d+)\]/.exec(result);
-      return match === null ? "" : `終了 ${match[1]}`;
+      return match === null ? "" : messages.toolSummary.exit(match[1] ?? "");
     }
     case "edit": {
       const match = /:\s*(\d+)\s+replacement/.exec(result);
-      return match === null ? "" : `${match[1]} か所`;
+      return match === null
+        ? ""
+        : messages.toolSummary.replacements(match[1] ?? "");
     }
     case "write": {
       const match = /\((\d+) lines?\)/.exec(result);
-      return match === null ? "" : `${match[1]}行`;
+      return match === null
+        ? ""
+        : messages.toolSummary.writtenLines(match[1] ?? "");
     }
     default:
       return "";

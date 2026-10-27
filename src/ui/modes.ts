@@ -1,12 +1,8 @@
+import { getMessages, type Messages } from "./i18n/index.js";
+
 export type Mode = "run" | "plan" | "ask";
 
 export const MODES: Mode[] = ["run", "plan", "ask"];
-
-export const MODE_LABELS: Record<Mode, string> = {
-  run: "実行",
-  plan: "計画",
-  ask: "質問",
-};
 
 const NOTICES: Record<Mode, string> = {
   run: "Run mode: you may read, edit files and run commands.",
@@ -21,17 +17,23 @@ export function nextMode(mode: Mode): Mode {
   return MODES[(index + 1) % MODES.length] ?? "run";
 }
 
-export function modeLabel(mode: Mode): string {
-  return MODE_LABELS[mode];
+export function modeLabel(
+  mode: Mode,
+  messages: Messages = getMessages(),
+): string {
+  return messages.modes[mode];
 }
 
 export function modeNotice(mode: Mode): string {
   return NOTICES[mode];
 }
 
-export function parseMode(text: string): Mode | undefined {
+export function parseMode(
+  text: string,
+  messages: Messages = getMessages(),
+): Mode | undefined {
   const value = text.trim();
-  const byLabel = MODES.find((mode) => MODE_LABELS[mode] === value);
+  const byLabel = MODES.find((mode) => messages.modes[mode] === value);
   if (byLabel !== undefined) {
     return byLabel;
   }

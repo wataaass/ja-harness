@@ -28,6 +28,19 @@ describe("MODELS", () => {
     }
   });
 
+  it("claude-haiku-5-5 に100k超の料金の段を持つ", () => {
+    expect(findModel("claude-haiku-5-5")?.tier).toEqual({
+      above: 100000,
+      prices: {
+        input: 0.5,
+        cachedInput: 0.05,
+        cacheWrite: 0.625,
+        output: 2.5,
+      },
+    });
+    expect(findModel("deepseek-v4.1-flash")?.tier).toBeUndefined();
+  });
+
   it("findModel は知らない名前で undefined", () => {
     expect(findModel("deepseek-v4.1-flash")?.prices.input).toBe(0.15);
     expect(findModel("nope")).toBeUndefined();

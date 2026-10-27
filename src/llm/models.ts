@@ -1,12 +1,15 @@
+export type ModelPrices = {
+  input: number;
+  cachedInput: number;
+  cacheWrite?: number;
+  output: number;
+};
+
 export type ModelInfo = {
   id: string;
   label: string;
-  prices: {
-    input: number;
-    cachedInput: number;
-    cacheWrite?: number;
-    output: number;
-  };
+  prices: ModelPrices;
+  tier?: { above: number; prices: ModelPrices };
   efforts: string[];
   defaultEffort: string;
 };
@@ -19,18 +22,23 @@ function model(
   cachedInput: number,
   output: number,
   cacheWrite?: number,
+  tier?: ModelInfo["tier"],
 ): ModelInfo {
   const prices: ModelInfo["prices"] = { input, cachedInput, output };
   if (cacheWrite !== undefined) {
     prices.cacheWrite = cacheWrite;
   }
-  return {
+  const info: ModelInfo = {
     id,
     label: id,
     prices,
     efforts: [...EFFORTS],
     defaultEffort: "high",
   };
+  if (tier !== undefined) {
+    info.tier = tier;
+  }
+  return info;
 }
 
 export const MODELS: ModelInfo[] = [
@@ -41,7 +49,15 @@ export const MODELS: ModelInfo[] = [
   model("glm-5.3-flash", 0.15, 0.03, 0.5),
   model("minimax-m3.1-flash", 0.15, 0.015, 0.6),
   model("kimi-k2.7-code", 0.95, 0.19, 4),
-  model("claude-haiku-5-5", 0.1, 0.01, 0.5, 0.125),
+  model("claude-haiku-5-5", 0.1, 0.01, 0.5, 0.125, {
+    above: 100000,
+    prices: {
+      input: 0.5,
+      cachedInput: 0.05,
+      cacheWrite: 0.625,
+      output: 2.5,
+    },
+  }),
 ];
 
 export function findModel(id: string): ModelInfo | undefined {

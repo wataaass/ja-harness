@@ -1,20 +1,12 @@
+import { getMessages, type Messages } from "./i18n/index.js";
 import type { Theme } from "./theme.js";
 import { truncate } from "./width.js";
 
-const MARKS: Record<string, string> = {
-  read: "読",
-  list: "覧",
-  grep: "探",
-  edit: "編",
-  write: "作",
-  shell: "実",
-  plan: "計",
-  submit_plan: "計",
-  ask: "問",
-};
-
-export function toolMark(name: string): string {
-  return MARKS[name] ?? "・";
+export function toolMark(
+  name: string,
+  messages: Messages = getMessages(),
+): string {
+  return messages.toolMarks[name] ?? messages.toolMarkFallback;
 }
 
 export function formatToolLine(o: {
@@ -24,8 +16,10 @@ export function formatToolLine(o: {
   failed?: boolean;
   theme: Theme;
   width: number;
+  messages?: Messages;
 }): string {
-  const mark = toolMark(o.name);
+  const messages = o.messages ?? getMessages();
+  const mark = toolMark(o.name, messages);
   const prefix = o.failed ? ` ✕${mark}  ` : ` ${mark}  `;
   let line = o.failed
     ? o.theme.error(`${prefix}${o.summary}`)

@@ -1,23 +1,24 @@
 import type { ConfirmRequest } from "../tools/confirm.js";
+import { getMessages, type Messages } from "./i18n/index.js";
 
 export type Permission = "ask" | "auto-edit" | "auto-all";
 
 export const PERMISSIONS: Permission[] = ["ask", "auto-edit", "auto-all"];
 
-export const PERMISSION_LABELS: Record<Permission, string> = {
-  ask: "確認する",
-  "auto-edit": "編集は自動",
-  "auto-all": "すべて自動",
-};
-
-export function permissionLabel(permission: Permission): string {
-  return PERMISSION_LABELS[permission];
+export function permissionLabel(
+  permission: Permission,
+  messages: Messages = getMessages(),
+): string {
+  return messages.permissions[permission];
 }
 
-export function parsePermission(text: string): Permission | undefined {
+export function parsePermission(
+  text: string,
+  messages: Messages = getMessages(),
+): Permission | undefined {
   const value = text.trim();
   const byLabel = PERMISSIONS.find(
-    (permission) => PERMISSION_LABELS[permission] === value,
+    (permission) => messages.permissions[permission] === value,
   );
   if (byLabel !== undefined) {
     return byLabel;
