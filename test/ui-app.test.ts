@@ -13,6 +13,11 @@ import type { Complete, Tool } from "../src/agent/loop.js";
 import type { Completion, Message, Usage } from "../src/llm/types.js";
 import type { Confirm, Decision } from "../src/tools/confirm.js";
 import { runApp } from "../src/ui/app.js";
+import {
+  createSessionWriter,
+  listSessions,
+  loadSession,
+} from "../src/ui/sessions.js";
 import { stringWidth, stripAnsi } from "../src/ui/width.js";
 
 class FakeInput {
@@ -131,7 +136,10 @@ function start(options: {
   createTools?: (confirm: Confirm) => Tool[];
   columns?: number;
   cwd?: string;
+  home?: string;
   model?: string;
+  resume?: string;
+  continueLatest?: boolean;
 }) {
   const input = new FakeInput();
   const output = new FakeOutput();
@@ -152,7 +160,7 @@ function start(options: {
     output,
     env: {},
     cwd: options.cwd ?? "/work",
-    home: "/home/user",
+    home: options.home ?? mkdtempSync(join(tmpdir(), "ja-harness-home-")),
     makeComplete,
     ...(options.createTools === undefined
       ? {}
@@ -161,6 +169,10 @@ function start(options: {
     model: options.model ?? "deepseek-v4.1-flash",
     version: "0.1",
     timing: { escape: 5, doubleEscape: 100, exit: 200 },
+    ...(options.resume === undefined ? {} : { resume: options.resume }),
+    ...(options.continueLatest === undefined
+      ? {}
+      : { continueLatest: options.continueLatest }),
   });
   return { input, output, result };
 }
@@ -1058,6 +1070,303 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
       );
       expect(last.at(-1)).toEqual({ role: "user", content: "again" });
     } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+function sessionDir(home: string): string {
+  return join(home, ".ja-harness", "sessions");
+}
+
+function seedSession(options: {
+  home: string;
+  cwd: string;
+  id: string;
+  createdAt: string;
+  messages: Message[];
+  cost?: number;
+}): string {
+  const writer = createSessionWriter(sessionDir(options.home), {
+    id: options.id,
+    cwd: options.cwd,
+    model: "deepseek-v4.1-flash",
+    createdAt: options.createdAt,
+  });
+  for (const message of options.messages) {
+    writer.append({ type: "message", message });
+  }
+  writer.append({
+    type: "usage",
+    usage: {
+      input: 100,
+      cachedInput: 50,
+      output: 10,
+      reasoning: 0,
+      cost: options.cost ?? 0.012,
+    },
+  });
+  return writer.path;
+}
+
+describe("runApp のセッション", () => {
+  it("新しいセッションに message と usage を書く", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([answer("ok")]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("hi\r");
+      await waitFor(output, "ok");
+      await waitFor(output, "今回");
+      expect(await close(input, output, result)).toBe(0);
+
+      const sessions = listSessions(sessionDir(home), cwd);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.turns).toBe(1);
+      expect(sessions[0]?.cost).toBeCloseTo(0.001);
+      expect(sessions[0]?.firstUser).toBe("hi");
+      const loaded = loadSession(sessions[0]?.path ?? "");
+      expect(loaded.messages.map((message) => message.role)).toEqual([
+        "system",
+        "user",
+        "assistant",
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/clear で新しいファイルを始め、前の会話は残す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([answer("ok")]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("hi\r");
+      await waitFor(output, "ok");
+      await waitFor(output, "今回");
+      input.send("/clear\r");
+      await waitFor(output, "会話を空にしました");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const sessions = listSessions(sessionDir(home), cwd);
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0]?.turns).toBe(0);
+      expect(loadSession(sessions[0]?.path ?? "").messages).toHaveLength(1);
+      expect(loadSession(sessions[1]?.path ?? "").messages).toHaveLength(3);
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/resume で messages を置き換え、次のリクエストに入れる", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const path = seedSession({
+        home,
+        cwd,
+        id: "old-session",
+        createdAt: "2026-10-26T03:12:00.000Z",
+        messages: [
+          { role: "system", content: "prompt" },
+          { role: "user", content: "前の話" },
+          { role: "assistant", content: "前の答え" },
+        ],
+      });
+      const { complete, calls } = sequence([answer("続きです")]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("/resume\r");
+      await waitFor(output, "前のセッション");
+      input.send("\r");
+      await waitFor(output, "続きから始めます（1件のやりとり）");
+      input.send("next\r");
+      await waitFor(output, "続きです");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(calls[0]?.map((message) => message.content)).toContain("前の話");
+      expect(calls[0]?.at(-1)).toEqual({ role: "user", content: "next" });
+      expect(
+        loadSession(path).messages.map((message) => message.content),
+      ).toContain("next");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("--continue で最新のセッションを読み込む", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      seedSession({
+        home,
+        cwd,
+        id: "latest-session",
+        createdAt: "2026-10-26T03:12:00.000Z",
+        messages: [
+          { role: "system", content: "prompt" },
+          { role: "user", content: "前の話" },
+          { role: "assistant", content: "前の答え" },
+        ],
+      });
+      const { complete, calls } = sequence([answer("続きです")]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        cwd,
+        continueLatest: true,
+      });
+
+      input.send("next\r");
+      await waitFor(output, "続きです");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(calls[0]?.map((message) => message.content)).toContain("前の話");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("あいさつに前回の料金とキャッシュの割合を出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      seedSession({
+        home,
+        cwd,
+        id: "old-session",
+        createdAt: "2026-10-26T03:12:00.000Z",
+        messages: [
+          { role: "system", content: "prompt" },
+          { role: "user", content: "前の話" },
+        ],
+      });
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      await waitFor(output, "前回のセッション 0.012ドル・キャッシュ 50%");
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/compact で会話を要約し、usage を足す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const long = "あ".repeat(80);
+      const { complete, calls } = sequence([
+        answer(`${long}一`),
+        answer(`${long}二`),
+        answer("短い要約"),
+      ]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("one\r");
+      await waitFor(output, "一");
+      await waitFor(output, "今回");
+      input.send("two\r");
+      await waitFor(output, "二");
+      await waitFor(output, "今回");
+      input.send("/compact\r");
+      await waitFor(output, "要約しました");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(
+        calls[2]?.some((message) => message.content.includes("checkpoint")),
+      ).toBe(true);
+      const sessions = listSessions(sessionDir(home), cwd);
+      expect(sessions[0]?.turns).toBe(3);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/context のカードに文脈と料金の内訳を出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([answer("ok")]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("hi\r");
+      await waitFor(output, "ok");
+      await waitFor(output, "今回");
+      input.send("/context\r");
+      await waitFor(output, "文脈の内訳");
+      await waitFor(output, "指示（system）");
+      await waitFor(output, "道具の定義");
+      await waitFor(output, "道具の結果");
+      await waitFor(output, "切り詰め・要約で減らした分");
+      await waitFor(output, "キャッシュに当たった入力");
+      input.send("\r");
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/model の行を短くし、単価の説明を出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("/model\r");
+      await waitFor(output, "単価は $/100万トークン");
+      await waitFor(output, "入0.15 キ0.003 出0.6");
+      input.send("\x1b");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("長い入力も折り返して2行目から字下げする", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([answer("ok")]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        cwd,
+        columns: 30,
+      });
+
+      input.send(`${"あ".repeat(20)}終\r`);
+      await waitFor(output, "終");
+      expect(await close(input, output, result)).toBe(0);
+
+      const lines = stripAnsi(output.text).split("\r\n");
+      const first = lines.find((line) => line.includes(" › あ"));
+      expect(first).toBeDefined();
+      const wrapped = lines.filter((line) => line.includes("   あ"));
+      expect(wrapped.length).toBeGreaterThan(0);
+      for (const line of [...wrapped, first ?? ""]) {
+        expect(stringWidth(line)).toBeLessThanOrEqual(30);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });
     }
   });

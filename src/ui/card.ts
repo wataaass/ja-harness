@@ -22,6 +22,9 @@ export function renderCard(o: {
   const lines = [theme.accent(top)];
 
   for (const body of o.body) {
+    if (body === "") {
+      continue;
+    }
     const content = padEnd(truncate(body, inner), inner);
     lines.push(`${theme.accent("│ ")}${content}${theme.accent(" │")}`);
   }
@@ -54,6 +57,9 @@ function renderNarrow(o: {
     `${o.theme.accent("│ ")}${o.theme.accent(truncate(o.title, max))}`,
   ];
   for (const body of o.body) {
+    if (body === "") {
+      continue;
+    }
     lines.push(`${o.theme.accent("│ ")}${truncate(body, max)}`);
   }
   if (o.footer !== undefined) {

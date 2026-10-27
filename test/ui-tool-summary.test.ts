@@ -53,6 +53,37 @@ describe("summarizeEnd", () => {
     );
   });
 
+  it("却下と一部採用を要点に出す", () => {
+    expect(
+      summarizeEnd(
+        "edit",
+        "The user declined this edit. Ask what they want instead.",
+        false,
+      ),
+    ).toBe("却下");
+    expect(
+      summarizeEnd(
+        "write",
+        "The user declined this write. Ask what they want instead.",
+        false,
+      ),
+    ).toBe("却下");
+    expect(
+      summarizeEnd(
+        "shell",
+        "The user declined this command. Ask what they want instead.",
+        false,
+      ),
+    ).toBe("却下");
+    expect(
+      summarizeEnd(
+        "edit",
+        "Edited a.ts: applied 2 of 3 hunks; the user rejected hunk 3.",
+        false,
+      ),
+    ).toBe("一部（2/3）");
+  });
+
   it("失敗なら結果の1行目の先頭50字", () => {
     const first = "x".repeat(60);
     expect(summarizeEnd("read", `${first}\nnext`, true)).toBe("x".repeat(50));

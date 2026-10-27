@@ -18,7 +18,7 @@ import { createTools } from "./tools/index.js";
 import { runApp } from "./ui/app.js";
 import { formatVersion, VERSION } from "./version.js";
 
-const HELP = `使い方: ja-harness
+const HELP = `使い方: ja-harness [--resume <id> | --continue]
         ja-harness "<指示>"
 
 引数なしで起動すると対話を始めます。
@@ -26,9 +26,11 @@ const HELP = `使い方: ja-harness
 ファイルの編集・作成とコマンドの実行は、その前に確認します。
 
 オプション:
-  --help       この使い方を出す
-  --version    バージョンを出す
-  bench        品質と料金を測る（ja-harness bench --help）
+  --help         この使い方を出す
+  --version      バージョンを出す
+  --resume <id>  保存したセッションの続きから始める
+  --continue     いちばん新しいセッションの続きから始める
+  bench          品質と料金を測る（ja-harness bench --help）
 
 環境変数:
   JA_HARNESS_BASE_URL   API の URL
@@ -38,12 +40,33 @@ const HELP = `使い方: ja-harness
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
+  let resume: string | undefined;
+  let continueLatest = false;
+  const rest: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--resume") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("-")) {
+        process.stderr.write(
+          "--resume にはセッションの id かファイル名が必要です\n",
+        );
+        return 1;
+      }
+      resume = value;
+      index += 1;
+    } else if (arg === "--continue") {
+      continueLatest = true;
+    } else if (arg !== undefined) {
+      rest.push(arg);
+    }
+  }
 
-  if (args.length === 1 && args[0] === "--help") {
+  if (rest.length === 1 && rest[0] === "--help") {
     process.stdout.write(HELP);
     return 0;
   }
-  if (args.length === 0) {
+  if (rest.length === 0) {
     if (process.stdin.isTTY === true && process.stdout.isTTY === true) {
       const { contextWindow, ...clientConfig } = readConfig(process.env);
       const session = randomUUID();
@@ -66,20 +89,22 @@ async function main(): Promise<number> {
         contextWindow,
         model: clientConfig.model,
         version: VERSION,
+        ...(resume === undefined ? {} : { resume }),
+        ...(continueLatest ? { continueLatest } : {}),
       });
     }
     process.stdout.write(`${formatVersion()}\n`);
     return 0;
   }
-  if (args.length === 1 && args[0] === "--version") {
+  if (rest.length === 1 && rest[0] === "--version") {
     process.stdout.write(`${formatVersion()}\n`);
     return 0;
   }
-  if (args[0] === "bench") {
-    return runBenchCli(args.slice(1));
+  if (rest[0] === "bench") {
+    return runBenchCli(rest.slice(1));
   }
 
-  const instruction = args.join(" ");
+  const instruction = rest.join(" ");
   const { contextWindow, ...clientConfig } = readConfig(process.env);
   const client = createClient({
     ...clientConfig,

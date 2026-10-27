@@ -118,6 +118,18 @@ describe("renderCard", () => {
     expect(lines.join("\n")).not.toContain("╭");
   });
 
+  it("本文が空の行は出さない", () => {
+    const lines = renderCard({
+      title: "コマンドを実行します",
+      body: [""],
+      footer: "Enter 許可",
+      width: 60,
+      theme: plain,
+    });
+    expect(lines).toHaveLength(2);
+    expect(lines[1]?.startsWith("╰─")).toBe(true);
+  });
+
   it("幅0なら空", () => {
     expect(
       renderCard({ title: "見出し", body: [], width: 0, theme: plain }),

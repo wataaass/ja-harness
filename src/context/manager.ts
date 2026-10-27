@@ -59,6 +59,11 @@ export function createContextManager(o: {
     tools: ToolSpec[],
     signal?: AbortSignal,
   ): Promise<StepPrep>;
+  compactNow(
+    messages: Message[],
+    tools: ToolSpec[],
+    signal?: AbortSignal,
+  ): Promise<StepPrep>;
 } {
   const { config, complete, estimate } = o;
   const threshold = summaryThreshold(config);
@@ -212,6 +217,24 @@ export function createContextManager(o: {
         tools,
         actions,
         config.keepRecentTokens,
+        signal,
+      );
+      return result.usage === undefined
+        ? { actions }
+        : { usage: result.usage, actions };
+    },
+
+    async compactNow(messages, tools, signal) {
+      const actions: ContextAction[] = [];
+      prune(messages, actions);
+      const last = messages[messages.length - 1];
+      const keepRecent =
+        last === undefined ? 0 : estimateMessages([last], estimate) + 1;
+      const result = await summarizeStep(
+        messages,
+        tools,
+        actions,
+        keepRecent,
         signal,
       );
       return result.usage === undefined

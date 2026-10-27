@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type Dirent,
   existsSync,
@@ -6,7 +7,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import {
   type Complete,
   type LoopEvent,
@@ -19,21 +20,21 @@ import { SYSTEM_PROMPT } from "../agent/prompt.js";
 import { createRepeatTracker } from "../agent/repeat.js";
 import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
-import { createEstimator } from "../context/tokens.js";
+import { createEstimator, estimateMessages } from "../context/tokens.js";
 import {
   costPer1kJaChars,
   findModel,
   MODELS,
   type ModelInfo,
 } from "../llm/models.js";
-import type { Message, Usage } from "../llm/types.js";
+import type { Message, ToolSpec, Usage } from "../llm/types.js";
 import type { Confirm, ConfirmRequest, Decision } from "../tools/confirm.js";
 import { computeHunks, formatHunk } from "../tools/hunks.js";
 import { createTools, type PlanHandler } from "../tools/index.js";
 import { renderCard } from "./card.js";
 import { type CheckpointFile, createCheckpoints } from "./checkpoints.js";
 import { applyKey, type EditorState, renderEditor } from "./editor.js";
-import { formatTurnSummary } from "./format.js";
+import { formatCost, formatTokens, formatTurnSummary } from "./format.js";
 import { renderGreeting } from "./greeting.js";
 import { createHistory } from "./history.js";
 import {
@@ -63,6 +64,14 @@ import {
   permissionLabel,
 } from "./permissions.js";
 import { createScreen } from "./screen.js";
+import {
+  createSessionWriter,
+  listSessions,
+  loadSession,
+  type SessionEntry,
+  type SessionSummary,
+  type SessionWriter,
+} from "./sessions.js";
 import { renderStatus } from "./status.js";
 import { createTheme } from "./theme.js";
 import { formatToolLine, toolMark } from "./tool-line.js";
@@ -96,6 +105,8 @@ export type AppOptions = {
   model: string;
   effort?: string;
   version: string;
+  resume?: string;
+  continueLatest?: boolean;
   prices?: { input: number; cachedInput: number; cacheWrite?: number };
   timing?: {
     escape?: number;
@@ -132,7 +143,8 @@ type PendingPlan = {
 type Picker =
   | { kind: "mode"; index: number }
   | { kind: "permission"; index: number }
-  | { kind: "model"; modelIndex: number; effortIndex: number };
+  | { kind: "model"; modelIndex: number; effortIndex: number }
+  | { kind: "session"; sessions: SessionSummary[]; index: number };
 
 type Warning = { text: string; onYes: () => void };
 
@@ -169,14 +181,6 @@ const HELP_LINES = [
   "  /help /mode /permission /model /details /undo /resume /clear /compact /summarize /context",
 ];
 
-const UNIMPLEMENTED = new Set([
-  "/resume",
-  "/clear",
-  "/compact",
-  "/summarize",
-  "/context",
-]);
-
 function zeroUsage(): Usage {
   return { input: 0, cachedInput: 0, output: 0, reasoning: 0 };
 }
@@ -204,12 +208,29 @@ function errorMessage(error: unknown): string {
 }
 
 function priceText(value: number): string {
-  return `$${value}`;
+  return String(value);
 }
 
 function modelRow(info: ModelInfo): string {
   const cost = costPer1kJaChars(info);
-  return `${info.label}  入力 ${priceText(info.prices.input)}・キャッシュ ${priceText(info.prices.cachedInput)}・出力 ${priceText(info.prices.output)} /100万  日本語1,000字 約$${cost.toFixed(4)}`;
+  return `${info.label}   入${priceText(info.prices.input)} キ${priceText(info.prices.cachedInput)} 出${priceText(info.prices.output)}   和1千字 $${cost.toFixed(4)}`;
+}
+
+function sessionDate(createdAt: string): string {
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) {
+    return createdAt.slice(0, 16).replace("T", " ");
+  }
+  const month = date.getMonth() + 1;
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${month}/${day} ${hours}:${minutes}`;
+}
+
+function sessionRow(session: SessionSummary): string {
+  const text = session.firstUser === "" ? "（空）" : session.firstUser;
+  return `${sessionDate(session.createdAt)}  ${text}  ${formatCost(session.cost)}・${session.turns}件`;
 }
 
 export async function runApp(o: AppOptions): Promise<number> {
@@ -241,7 +262,12 @@ export async function runApp(o: AppOptions): Promise<number> {
       contextWindow: o.contextWindow,
       ...(o.prices === undefined ? {} : { prices: o.prices }),
     },
-    complete: (messages, tools, cb) => currentComplete()(messages, tools, cb),
+    complete: (messages, tools, cb) =>
+      currentComplete()(messages, tools, {
+        onText: () => {},
+        onReasoning: () => {},
+        ...(cb ?? {}),
+      }),
     estimate,
   });
 
@@ -255,6 +281,7 @@ export async function runApp(o: AppOptions): Promise<number> {
   let review: Review | undefined;
   let plan: PendingPlan | undefined;
   let picker: Picker | undefined;
+  let contextView: string[] | undefined;
   let warning: Warning | undefined;
   let pendingNotice: string | undefined;
   let activeTool: { name: string; summary: string } | undefined;
@@ -281,6 +308,14 @@ export async function runApp(o: AppOptions): Promise<number> {
   let turnUsage = zeroUsage();
   let lastStepInput = 0;
 
+  const sessionsDir = join(o.home ?? o.cwd, ".ja-harness", "sessions");
+  let sessionWriter: SessionWriter | undefined;
+  let sessionId = "";
+  let recordedMessages = 0;
+  let savedByContext = 0;
+  let booted = false;
+  const startupLines: string[] = [];
+
   let resolveRun: (code: number) => void = () => {};
   const finished = new Promise<number>((resolve) => {
     resolveRun = resolve;
@@ -296,6 +331,105 @@ export async function runApp(o: AppOptions): Promise<number> {
 
   function totalUsage(): Usage {
     return addUsage(sessionUsage, turnUsage);
+  }
+
+  function writeSession(entry: SessionEntry): void {
+    if (sessionWriter === undefined) {
+      return;
+    }
+    const text = sessionWriter.append(entry);
+    if (text !== undefined) {
+      if (booted) {
+        emit([` ${text}`]);
+      } else {
+        startupLines.push(` ${text}`);
+      }
+    }
+  }
+
+  function recordMessages(): void {
+    for (let index = recordedMessages; index < messages.length; index += 1) {
+      const message = messages[index];
+      if (message !== undefined) {
+        writeSession({ type: "message", message });
+      }
+    }
+    recordedMessages = messages.length;
+  }
+
+  function recordReset(): void {
+    writeSession({ type: "reset", messages: [...messages] });
+    recordedMessages = messages.length;
+  }
+
+  function newSession(): void {
+    const createdAt = new Date().toISOString();
+    const meta = {
+      type: "meta" as const,
+      id: randomUUID(),
+      cwd: o.cwd,
+      model,
+      createdAt,
+    };
+    sessionId = meta.id;
+    sessionWriter = createSessionWriter(sessionsDir, meta);
+    recordedMessages = 0;
+    recordMessages();
+  }
+
+  function applyLoadedSession(summary: SessionSummary): boolean {
+    try {
+      const loaded = loadSession(summary.path);
+      messages.splice(0, messages.length, ...loaded.messages);
+      if (messages.length === 0 || messages[0]?.role !== "system") {
+        messages.unshift({ role: "system", content: SYSTEM_PROMPT });
+      }
+      sessionId = loaded.meta.id === "" ? summary.id : loaded.meta.id;
+      sessionWriter = createSessionWriter(
+        sessionsDir,
+        loaded.meta,
+        summary.path,
+      );
+      recordedMessages = messages.length;
+      sessionUsage = loaded.usage;
+      turnUsage = zeroUsage();
+      lastStepInput = 0;
+      savedByContext = 0;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function findSessionIn(
+    sessions: SessionSummary[],
+    key: string,
+  ): SessionSummary | undefined {
+    return (
+      sessions.find((session) => session.id === key) ??
+      sessions.find((session) => session.path === key) ??
+      sessions.find((session) => basename(session.path) === key) ??
+      sessions.find((session) => basename(session.path, ".jsonl") === key)
+    );
+  }
+
+  function makeTools(): Tool[] {
+    return (
+      o.createTools ??
+      ((fn, planFn) =>
+        createTools(o.cwd, fn, {
+          plan: planFn,
+          beforeWrite: (abs) => checkpoints.recordBefore(abs),
+        }))
+    )(confirmWithPermission, planHandler);
+  }
+
+  function toolSpecs(): ToolSpec[] {
+    return makeTools().map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+    }));
   }
 
   function statusLine(maxWidth: number): string {
@@ -364,6 +498,19 @@ export async function runApp(o: AppOptions): Promise<number> {
         theme,
       });
     }
+    if (current.kind === "session") {
+      const body = current.sessions.map((session, index) => {
+        const text = ` ${index === current.index ? "●" : " "} ${sessionRow(session)}`;
+        return index === current.index ? theme.accent(text) : text;
+      });
+      return renderCard({
+        title: "前のセッション",
+        body,
+        footer: "↑↓ 選ぶ  Enter 決める  Esc やめる",
+        width: maxWidth,
+        theme,
+      });
+    }
     const info = MODELS[current.modelIndex] ?? MODELS[0];
     if (info === undefined) {
       return [];
@@ -375,7 +522,10 @@ export async function runApp(o: AppOptions): Promise<number> {
           : ` ${item} `;
       return index === current.effortIndex ? theme.accent(text) : text;
     });
-    const body: string[] = [` 推論の量  ${efforts.join("  ")}`];
+    const body: string[] = [
+      ` 推論の量  ${efforts.join("  ")}`,
+      " 単価は $/100万トークン。入=入力 キ=キャッシュの読み 出=出力",
+    ];
     for (let index = 0; index < MODELS.length; index += 1) {
       const item = MODELS[index];
       if (item === undefined) {
@@ -530,7 +680,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         );
       } else {
         const detail = pending.request.detail.split(/\r?\n/);
-        const body = detail.slice(0, 20);
+        const body = pending.request.detail === "" ? [] : detail.slice(0, 20);
         if (detail.length > 20) {
           body.push(`…ほか${detail.length - 20}行`);
         }
@@ -564,6 +714,16 @@ export async function runApp(o: AppOptions): Promise<number> {
           col: 4 + rendered.cursorCol,
         };
       }
+    } else if (contextView !== undefined) {
+      lines.push(
+        ...renderCard({
+          title: "文脈の内訳",
+          body: contextView,
+          footer: "Enter か Esc で閉じる",
+          width: maxWidth,
+          theme,
+        }),
+      );
     } else if (warning !== undefined) {
       lines.push(
         ...renderCard({
@@ -650,9 +810,18 @@ export async function runApp(o: AppOptions): Promise<number> {
 
   function printUser(text: string, duringWork: boolean): void {
     const parts = text.split(/\r?\n/);
-    const lines = [` › ${parts[0] ?? ""}`];
-    for (let i = 1; i < parts.length; i += 1) {
-      lines.push(`   ${parts[i]}`);
+    const limit = Math.max(1, width() - 3);
+    const lines: string[] = [];
+    for (let i = 0; i < parts.length; i += 1) {
+      const part = parts[i] ?? "";
+      const wrapped = part === "" ? [""] : wrap(part, limit);
+      for (let j = 0; j < wrapped.length; j += 1) {
+        const prefix = i === 0 && j === 0 ? " › " : "   ";
+        lines.push(`${prefix}${wrapped[j] ?? ""}`);
+      }
+    }
+    if (lines.length === 0) {
+      lines.push(" › ");
     }
     if (duringWork) {
       lines[lines.length - 1] += "（作業中に送信）";
@@ -1194,6 +1363,41 @@ export async function runApp(o: AppOptions): Promise<number> {
       return;
     }
 
+    if (picker.kind === "session") {
+      const length = picker.sessions.length;
+      if (length === 0) {
+        picker = undefined;
+        render();
+        return;
+      }
+      if (key.type === "up") {
+        picker.index = (picker.index - 1 + length) % length;
+        render();
+        return;
+      }
+      if (key.type === "down") {
+        picker.index = (picker.index + 1) % length;
+        render();
+        return;
+      }
+      if (key.type === "enter") {
+        const chosen = picker.sessions[picker.index];
+        picker = undefined;
+        if (chosen === undefined) {
+          render();
+          return;
+        }
+        if (!applyLoadedSession(chosen)) {
+          emit([" セッションを読み込めません"]);
+          return;
+        }
+        emit([
+          ` 続きから始めます（${chosen.turns}件のやりとり）。最初の1回はキャッシュが効きません`,
+        ]);
+      }
+      return;
+    }
+
     if (picker.kind === "mode" || picker.kind === "permission") {
       const length = picker.kind === "mode" ? MODES.length : PERMISSIONS.length;
       if (key.type === "up") {
@@ -1290,6 +1494,99 @@ export async function runApp(o: AppOptions): Promise<number> {
     render();
   }
 
+  function compactConversation(): void {
+    busy = true;
+    thinking = true;
+    render();
+    void (async () => {
+      try {
+        const before = estimateMessages(messages, estimate);
+        const prep = await manager.compactNow(messages, toolSpecs(), undefined);
+        const after = estimateMessages(messages, estimate);
+        if (prep.usage !== undefined) {
+          sessionUsage = addUsage(sessionUsage, prep.usage);
+          writeSession({ type: "usage", usage: prep.usage });
+        }
+        recordReset();
+        savedByContext += prep.actions.reduce(
+          (total, action) => total + action.savedTokens,
+          0,
+        );
+        if (prep.actions.some((action) => action.action === "summary")) {
+          emit([
+            ` 要約しました: ${formatTokens(before)} → ${formatTokens(after)} トークン`,
+          ]);
+        } else {
+          emit([" まだ要約するほど長くありません"]);
+        }
+      } catch (error) {
+        if (!closed) {
+          emit([
+            theme.error(` ✕ ${errorMessage(error).split(/\r?\n/)[0] ?? ""}`),
+          ]);
+        }
+      } finally {
+        if (!closed) {
+          busy = false;
+          thinking = false;
+          render();
+        }
+      }
+    })();
+  }
+
+  function showContext(): void {
+    const specs = toolSpecs();
+    const toolTokens = estimate(JSON.stringify(specs));
+    let instructions = 0;
+    let conversation = 0;
+    let results = 0;
+    for (const message of messages) {
+      let tokens = 4 + estimate(message.content);
+      if (message.role === "assistant") {
+        tokens += estimate(message.reasoning ?? "");
+        for (const call of message.toolCalls ?? []) {
+          tokens += estimate(call.name) + estimate(call.arguments);
+        }
+      }
+      if (message.role === "system") {
+        instructions += tokens;
+      } else if (message.role === "tool") {
+        results += tokens;
+      } else {
+        conversation += tokens;
+      }
+    }
+    const total = instructions + toolTokens + conversation + results;
+    const ratio = o.contextWindow > 0 ? total / o.contextWindow : 0;
+
+    const used = totalUsage();
+    const info = findModel(model);
+    const inputPrice = info?.prices.input ?? o.prices?.input ?? 0;
+    const cachedPrice = info?.prices.cachedInput ?? o.prices?.cachedInput ?? 0;
+    const outputPrice = info?.prices.output ?? 0;
+    const cached = used.cachedInput;
+    const uncached = Math.max(0, used.input - used.cachedInput);
+    const output = used.output;
+    const cachedCost = (cached * cachedPrice) / 1_000_000;
+    const uncachedCost = (uncached * inputPrice) / 1_000_000;
+    const outputCost = (output * outputPrice) / 1_000_000;
+
+    contextView = [
+      ` 指示（system）      ${formatTokens(instructions)} トークン`,
+      ` 道具の定義          ${formatTokens(toolTokens)} トークン`,
+      ` 会話                ${formatTokens(conversation)} トークン`,
+      ` 道具の結果          ${formatTokens(results)} トークン`,
+      ` 合計                ${formatTokens(total)} トークン（上限の ${Math.round(ratio * 100)}%）`,
+      ` 切り詰め・要約で減らした分  ${formatTokens(savedByContext)} トークン`,
+      " セッションの料金（今のモデルの単価）",
+      ` キャッシュに当たった入力  ${formatTokens(cached)} トークン  ${formatCost(cachedCost)}`,
+      ` 当たらなかった入力        ${formatTokens(uncached)} トークン  ${formatCost(uncachedCost)}`,
+      ` 出力                      ${formatTokens(output)} トークン  ${formatCost(outputCost)}`,
+    ];
+    render();
+  }
+
   function handleCommand(text: string): boolean {
     if (!text.startsWith("/")) {
       return false;
@@ -1301,11 +1598,6 @@ export async function runApp(o: AppOptions): Promise<number> {
 
     if (busy && command !== "/details" && command !== "/help") {
       emit([" 作業が終わってから使えます"]);
-      return true;
-    }
-
-    if (UNIMPLEMENTED.has(command)) {
-      emit([" まだ使えません"]);
       return true;
     }
 
@@ -1374,6 +1666,37 @@ export async function runApp(o: AppOptions): Promise<number> {
         render();
         return true;
       }
+      case "/resume": {
+        const sessions = listSessions(sessionsDir, o.cwd).filter(
+          (session) => session.id !== sessionId,
+        );
+        if (sessions.length === 0) {
+          emit([" 前のセッションがありません"]);
+          return true;
+        }
+        picker = { kind: "session", sessions, index: 0 };
+        render();
+        return true;
+      }
+      case "/clear": {
+        messages.splice(0, messages.length, {
+          role: "system",
+          content: SYSTEM_PROMPT,
+        });
+        sessionUsage = zeroUsage();
+        turnUsage = zeroUsage();
+        lastStepInput = 0;
+        newSession();
+        emit([" 会話を空にしました（前のものは /resume で続けられます）"]);
+        return true;
+      }
+      case "/compact":
+      case "/summarize":
+        compactConversation();
+        return true;
+      case "/context":
+        showContext();
+        return true;
       default:
         emit([` 知らないコマンドです: ${command}`]);
         return true;
@@ -1404,6 +1727,17 @@ export async function runApp(o: AppOptions): Promise<number> {
   }
 
   function handleKey(key: Key): void {
+    if (contextView !== undefined) {
+      if (
+        key.type === "enter" ||
+        key.type === "escape" ||
+        (key.type === "ctrl" && key.key === "d")
+      ) {
+        contextView = undefined;
+        render();
+      }
+      return;
+    }
     if (warning !== undefined) {
       handleWarningKey(key);
       return;
@@ -1618,6 +1952,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         render();
         return;
       case "tool-end": {
+        recordMessages();
         const start = activeTool?.summary ?? "";
         const end = summarizeEnd(event.name, event.result, event.isError);
         let summary = start === "" ? event.name : start;
@@ -1648,13 +1983,17 @@ export async function runApp(o: AppOptions): Promise<number> {
       case "step-end":
         lastStepInput = event.usage.input;
         turnUsage = addUsage(turnUsage, event.usage);
+        recordMessages();
         thinking = true;
         render();
         return;
       case "input-delivered":
+        recordMessages();
         render();
         return;
       case "context":
+        savedByContext += event.savedTokens;
+        recordReset();
         emit([
           theme.dim(
             ` （文脈: ${event.action === "prune" ? "切り詰め" : "要約"} ${event.savedTokens} トークン減）`,
@@ -1690,6 +2029,8 @@ export async function runApp(o: AppOptions): Promise<number> {
       messages.push(notice(noticeText));
     }
     messages.push({ role: "user", content: text });
+    recordMessages();
+    let usageWritten = false;
     busy = true;
     thinking = true;
     turnUsage = zeroUsage();
@@ -1700,15 +2041,7 @@ export async function runApp(o: AppOptions): Promise<number> {
     abort = new AbortController();
     render();
 
-    const created = (
-      o.createTools ??
-      ((fn, planFn) =>
-        createTools(o.cwd, fn, {
-          plan: planFn,
-          beforeWrite: (abs) => checkpoints.recordBefore(abs),
-        }))
-    )(confirmWithPermission, planHandler);
-    const tools = created.map((tool) => ({
+    const tools = makeTools().map((tool) => ({
       ...tool,
       execute: async (args: unknown, signal?: AbortSignal) => {
         if (!modeAllowsTool(mode, tool.name)) {
@@ -1747,6 +2080,9 @@ export async function runApp(o: AppOptions): Promise<number> {
       flushLive();
       thinking = false;
       sessionUsage = addUsage(sessionUsage, result.usage);
+      recordMessages();
+      writeSession({ type: "usage", usage: result.usage });
+      usageWritten = true;
       turnUsage = zeroUsage();
       turnSaved = true;
       const cacheRatio =
@@ -1767,6 +2103,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       if (closed) {
         return;
       }
+      recordMessages();
       printReasoning();
       flushLive();
       thinking = false;
@@ -1783,8 +2120,14 @@ export async function runApp(o: AppOptions): Promise<number> {
       if (!closed) {
         if (!turnSaved) {
           sessionUsage = addUsage(sessionUsage, turnUsage);
-          turnUsage = zeroUsage();
         }
+        if (!usageWritten) {
+          const usage = turnUsage;
+          if (usage.input + usage.cachedInput + usage.output > 0) {
+            writeSession({ type: "usage", usage });
+          }
+        }
+        turnUsage = zeroUsage();
         busy = false;
         thinking = false;
         activeTool = undefined;
@@ -1802,17 +2145,44 @@ export async function runApp(o: AppOptions): Promise<number> {
 
   o.input.setRawMode?.(true);
   o.output.write("\x1b[?2004h");
-  screen.print(
-    renderGreeting({
+
+  const knownSessions = listSessions(sessionsDir, o.cwd);
+  if (o.resume !== undefined) {
+    const found = findSessionIn(knownSessions, o.resume);
+    const opened = found === undefined ? false : applyLoadedSession(found);
+    if (!opened) {
+      startupLines.push(` セッションが見つかりません: ${o.resume}`);
+      newSession();
+    }
+  } else if (o.continueLatest) {
+    const found = knownSessions[0];
+    const opened = found === undefined ? false : applyLoadedSession(found);
+    if (!opened) {
+      newSession();
+    }
+  } else {
+    newSession();
+  }
+
+  const previous = listSessions(sessionsDir, o.cwd).find(
+    (session) => session.id !== sessionId,
+  );
+  screen.print([
+    ...renderGreeting({
       version: o.version,
       model,
       effort,
       cwd: o.cwd,
       home: o.home,
+      ...(previous === undefined
+        ? {}
+        : { last: { cost: previous.cost, cacheRatio: previous.cacheRatio } }),
       theme,
       width: width(),
     }),
-  );
+    ...startupLines,
+  ]);
+  booted = true;
   render();
 
   o.input.on("data", onData);

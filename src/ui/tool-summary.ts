@@ -53,6 +53,17 @@ export function summarizeEnd(
     return Array.from(first).slice(0, 50).join("");
   }
 
+  if (/\bdeclined\b/i.test(result)) {
+    return "却下";
+  }
+
+  if (name === "edit") {
+    const applied = /applied (\d+) of (\d+) hunks?/i.exec(result);
+    if (applied !== null) {
+      return `一部（${applied[1]}/${applied[2]}）`;
+    }
+  }
+
   switch (name) {
     case "read": {
       const match = /\(lines \d+-\d+ of (\d+)\)/.exec(result);
