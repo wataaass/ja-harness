@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join, relative } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
   type Complete,
   type LoopEvent,
@@ -298,6 +299,7 @@ export async function runApp(o: AppOptions): Promise<number> {
   let pendingNotice: string | undefined;
   let activeTool: { name: string; summary: string } | undefined;
   let decoder: DecoderState = emptyDecoderState();
+  const utf8Decoder = new StringDecoder("utf8");
   let escapeTimer: ReturnType<typeof setTimeout> | undefined;
   let exitTimer: ReturnType<typeof setTimeout> | undefined;
   let exitAskedAt: number | undefined;
@@ -1959,7 +1961,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       clearTimeout(escapeTimer);
       escapeTimer = undefined;
     }
-    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    const text = typeof chunk === "string" ? chunk : utf8Decoder.write(chunk);
     const result = decodeKeys(text, decoder);
     decoder = result.state;
     for (const key of result.keys) {
@@ -2282,7 +2284,13 @@ export async function runApp(o: AppOptions): Promise<number> {
     ...startupLines,
   ]);
   if (warnings.length > 0) {
-    screen.print(warnings.map((text) => theme.warn(text)));
+    screen.print(
+      warnings.flatMap((text) =>
+        wrap(text, Math.max(1, width() - 3)).map((part, index) =>
+          theme.warn(`${index === 0 ? " " : "   "}${part}`),
+        ),
+      ),
+    );
   }
   booted = true;
   render();

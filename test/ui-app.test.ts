@@ -18,7 +18,7 @@ import {
   listSessions,
   loadSession,
 } from "../src/ui/sessions.js";
-import { stringWidth, stripAnsi } from "../src/ui/width.js";
+import { stringWidth, stripAnsi, wrap } from "../src/ui/width.js";
 
 class FakeInput {
   isTTY = false;
@@ -43,7 +43,7 @@ class FakeInput {
     this.raw = mode;
   }
 
-  send(text: string): void {
+  send(text: string | Buffer): void {
     for (const listener of [...this.listeners]) {
       listener(text);
     }
@@ -268,6 +268,40 @@ describe("runApp", () => {
     expect(text).toContain("読  src/app.ts（120行）");
     expect(text).toContain("直しました。");
     expect(text).toContain("今回 30 トークン");
+  });
+
+  it("UTF-8の3バイトの文字が2つの塊で届いても文字化けしない", async () => {
+    const { complete } = sequence([answer("ok")]);
+    const { input, output, result } = start({ complete });
+    const bytes = Buffer.from("日");
+    input.send(bytes.subarray(0, 2));
+    input.send(bytes.subarray(2));
+
+    await waitFor(output, "› 日");
+    input.send("\r");
+    await waitFor(output, "ok");
+    expect(await close(input, output, result)).toBe(0);
+
+    const text = stripAnsi(output.text);
+    expect(text).toContain("日");
+    expect(text).not.toContain("�");
+  });
+
+  it("UTF-8の4バイトの絵文字が2つの塊で届いても文字化けしない", async () => {
+    const { complete } = sequence([answer("ok")]);
+    const { input, output, result } = start({ complete });
+    const bytes = Buffer.from("🙂");
+    input.send(bytes.subarray(0, 2));
+    input.send(bytes.subarray(2));
+
+    await waitFor(output, "› 🙂");
+    input.send("\r");
+    await waitFor(output, "ok");
+    expect(await close(input, output, result)).toBe(0);
+
+    const text = stripAnsi(output.text);
+    expect(text).toContain("🙂");
+    expect(text).not.toContain("�");
   });
 
   it("長い答えは端末の幅で折り返して字下げする", async () => {
@@ -1574,6 +1608,41 @@ describe("runApp の設定ファイル", () => {
       await waitFor(output, "ja-harness 0.1");
       expect(output.text).toContain("\u001B[38;2;22;94;131m");
       expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("設定ファイルの警告を端末の幅で折り返して字下げする", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    try {
+      const path = join(home, ".ja-harness", "config.json");
+      mkdirSync(join(home, ".ja-harness"), { recursive: true });
+      writeFileSync(path, "{");
+      const warning = `設定ファイルの ${path} が壊れています（JSON として読めません）`;
+      const { complete } = sequence([]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        columns: 30,
+      });
+
+      await waitFor(output, "壊れています");
+      expect(await close(input, output, result)).toBe(0);
+
+      const lines = stripAnsi(output.text).split("\r\n");
+      const expected = wrap(warning, 27).map((part, index) =>
+        index === 0 ? ` ${part}` : `   ${part}`,
+      );
+      expect(expected.length).toBeGreaterThan(1);
+      for (const line of expected) {
+        expect(lines).toContain(line);
+        expect(stringWidth(line)).toBeLessThanOrEqual(30);
+      }
+      expect(expected[0]?.startsWith(" ")).toBe(true);
+      expect(expected.slice(1).every((line) => line.startsWith("   "))).toBe(
+        true,
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
