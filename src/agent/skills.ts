@@ -229,3 +229,67 @@ export function readSkillFile(skill: Skill, file?: string): string {
 export function builtinSkillsDir(): string {
   return fileURLToPath(new URL("../../skills", import.meta.url));
 }
+
+export type SkillSource =
+  | { kind: "github"; repoUrl: string; branch?: string; path?: string }
+  | { kind: "local"; path: string };
+
+export function parseSkillSource(source: string): SkillSource {
+  const text = source.trim();
+  const match =
+    /^https?:\/\/(?:www\.)?github\.com\/([^/?#]+)\/([^/?#]+?)(?:\.git)?(?:\/(.*))?$/i.exec(
+      text,
+    );
+  if (match === null) {
+    return { kind: "local", path: text };
+  }
+  const owner = match[1] ?? "";
+  const repo = match[2] ?? "";
+  const rest = (match[3] ?? "").replace(/\/+$/, "");
+  const repoUrl = `https://github.com/${owner}/${repo}`;
+  if (rest === "") {
+    return { kind: "github", repoUrl };
+  }
+  const tree = /^tree\/(.+)$/.exec(rest);
+  if (tree === null) {
+    return { kind: "github", repoUrl };
+  }
+  const parts = (tree[1] ?? "").split("/");
+  const branch = parts[0] ?? "";
+  if (branch === "") {
+    return { kind: "github", repoUrl };
+  }
+  const path = parts.slice(1).join("/");
+  return {
+    kind: "github",
+    repoUrl,
+    branch,
+    ...(path === "" ? {} : { path }),
+  };
+}
+
+export function findSkillFolders(root: string, maxDepth = 3): string[] {
+  const found: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    if (entries.some((entry) => entry.isFile() && entry.name === "SKILL.md")) {
+      found.push(dir);
+    }
+    if (depth >= maxDepth) {
+      return;
+    }
+    const dirs = entries
+      .filter((entry) => entry.isDirectory() && entry.name !== ".git")
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of dirs) {
+      walk(join(dir, entry.name), depth + 1);
+    }
+  };
+  walk(root, 0);
+  return found.sort((a, b) => a.localeCompare(b));
+}

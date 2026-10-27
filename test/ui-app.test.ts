@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -1773,6 +1774,129 @@ describe("runApp の決まりのファイル", () => {
       expect(output.text).toContain(
         "\u001B[2m  Instructions: AGENTS.md\u001B[0m",
       );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+function writePersonalSkill(home: string, name: string, body = "本文") {
+  const dir = join(home, ".ja-harness", "skills", name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "SKILL.md"),
+    `---\nname: ${name}\ndescription: ${name} の説明。\n---\n${body}\n`,
+  );
+  return dir;
+}
+
+describe("runApp のスキル", () => {
+  it("/skills で一覧を出し、Space で切り替えて Enter で保存する", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writePersonalSkill(home, "demo");
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("/skills\r");
+      await waitFor(output, "[x] demo");
+      input.send(" ");
+      await waitFor(output, "[ ] demo");
+      input.send("\r");
+      await waitFor(output, "保存しました。次の /clear か起動から効きます");
+
+      const path = join(home, ".ja-harness", "config.json");
+      const saved = JSON.parse(readFileSync(path, "utf8")) as {
+        skills: { disabled: string[] };
+      };
+      expect(saved.skills.disabled).toContain("demo");
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("作業フォルダで無効なスキルは [-] で切り替えず、保存にも入れない", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writePersonalSkill(home, "demo");
+      writeSettingsConfig(cwd, { skills: { disabled: ["demo"] } });
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("/skills\r");
+      await waitFor(output, "[-] demo");
+      input.send(" ");
+      input.send("\r");
+      await waitFor(output, "保存しました。次の /clear か起動から効きます");
+
+      const path = join(home, ".ja-harness", "config.json");
+      const saved = JSON.parse(readFileSync(path, "utf8")) as {
+        skills: { disabled: string[] };
+      };
+      expect(saved.skills.disabled).not.toContain("demo");
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/<スキル名> の後ろの文を添えてスキルの本文を送る", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writePersonalSkill(home, "demo", "手順です。");
+      const { complete, calls } = sequence([answer("ok")]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("/demo これを直して\r");
+      await waitFor(output, "ok");
+
+      expect(await close(input, output, result)).toBe(0);
+      const last = calls[0]?.at(-1);
+      expect(last?.content).toContain('Follow the skill "demo" below.');
+      expect(last?.content).toContain("手順です。");
+      expect(last?.content).toContain("User request: これを直して");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("ローカルのフォルダから /skills add で個人のスキルに入れる", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const source = join(cwd, "source", "my-skill");
+      mkdirSync(source, { recursive: true });
+      writeFileSync(
+        join(source, "SKILL.md"),
+        "---\nname: added\ndescription: Added skill.\n---\n本文\n",
+      );
+      writeFileSync(join(source, "extra.txt"), "参考\n");
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send(`/skills add ${source}\r`);
+      await waitFor(output, "Install skills");
+      await waitFor(output, "added — Added skill.");
+      input.send("\r");
+      await waitFor(output, "入れました: added。");
+
+      const dir = join(home, ".ja-harness", "skills", "added");
+      expect(readFileSync(join(dir, "SKILL.md"), "utf8")).toContain(
+        "name: added",
+      );
+      expect(existsSync(join(dir, "extra.txt"))).toBe(true);
+
+      expect(await close(input, output, result)).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });

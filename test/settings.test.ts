@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadSettings } from "../src/cli/settings.js";
+import { loadSettings, updateDisabledSkills } from "../src/cli/settings.js";
 
 const dirs: string[] = [];
 
@@ -239,6 +239,31 @@ describe("loadSettings", () => {
       model: "env-model",
       effort: "high",
       language: { ui: "en" },
+    });
+  });
+});
+
+describe("updateDisabledSkills", () => {
+  it("ファイルがなければ skills.disabled だけを作る", () => {
+    const output = updateDisabledSkills(undefined, ["demo"]);
+
+    expect(JSON.parse(output)).toEqual({ skills: { disabled: ["demo"] } });
+  });
+
+  it("ほかのキーを残して skills.disabled を置き換える", () => {
+    const output = updateDisabledSkills(
+      JSON.stringify({
+        model: "home-model",
+        ui: { theme: "light" },
+        skills: { disabled: ["old"] },
+      }),
+      ["new"],
+    );
+
+    expect(JSON.parse(output)).toEqual({
+      model: "home-model",
+      ui: { theme: "light" },
+      skills: { disabled: ["new"] },
     });
   });
 });

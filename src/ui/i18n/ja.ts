@@ -41,6 +41,9 @@ export const ja = {
       `設定ファイルの ${path} の ${key} がオブジェクトではありません`,
     notStringArray: (path: string, key: string) =>
       `設定ファイルの ${path} の ${key} が文字列の配列ではありません`,
+    brokenSave:
+      "設定ファイルが壊れているので保存しません（JSON として読めません）",
+    shapeSave: "設定ファイルの形が正しくないので保存しません",
   },
 
   status: {
@@ -90,7 +93,7 @@ export const ja = {
     "  Shift+Tab mode  Ctrl+O details  Ctrl+R review  Ctrl+C clear input  Ctrl+D twice to exit",
     "  Esc stop/close  Tab complete",
     " Commands",
-    "  /help /mode /permission /model /details /undo /resume /clear /compact /summarize /context",
+    "  /help /mode /permission /model /details /undo /resume /skills /clear /compact /summarize /context",
   ],
 
   app: {
@@ -158,6 +161,26 @@ export const ja = {
       effortLabel: "Effort",
       modelTitle: "Model",
       modelFooter: "↑↓ model  ←→ effort  Enter select  Esc cancel",
+      skillsTitle: "Skills",
+      skillsFooter: "↑↓ move  Space toggle  Enter save  Esc cancel",
+      skillsRow: (mark: string, name: string, source: string, tokens: string) =>
+        `${mark} ${name}  ${source}  ~${tokens} tokens`,
+      skillsSaved: " 保存しました。次の /clear か起動から効きます",
+    },
+    skillsInstall: {
+      title: "Install skills",
+      footer: "Enter install  Esc cancel",
+      row: (name: string, description: string, replace: boolean) =>
+        `${name} — ${description}${replace ? " (replace)" : ""}`,
+      installed: (names: string) =>
+        ` 入れました: ${names}。次の /clear か起動から使えます`,
+      notFound: " SKILL.md が見つかりません",
+      noSource:
+        " /skills add のあとに GitHub の URL かフォルダのパスを書いてください",
+      noGit: " git がないのでスキルを入れられません",
+      cloneFailed: (message: string) => ` git clone に失敗しました: ${message}`,
+      copyFailed: (message: string) =>
+        ` スキルをコピーできませんでした: ${message}`,
     },
     plan: {
       reasonTitle: "What to change",

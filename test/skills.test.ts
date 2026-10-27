@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  findSkillFolders,
   formatSkillList,
   loadSkills,
   parseSkill,
+  parseSkillSource,
   readSkillFile,
   type Skill,
 } from "../src/agent/skills.js";
@@ -229,5 +231,66 @@ describe("readSkillFile", () => {
 
     expect(() => readSkillFile(skill, "../secret.md")).toThrow();
     expect(() => readSkillFile(skill, join(base, "secret.md"))).toThrow();
+  });
+});
+
+describe("parseSkillSource", () => {
+  it("GitHub のリポジトリを読む", () => {
+    expect(parseSkillSource("https://github.com/owner/repo")).toEqual({
+      kind: "github",
+      repoUrl: "https://github.com/owner/repo",
+    });
+  });
+
+  it("tree の枝とパスを分ける", () => {
+    expect(
+      parseSkillSource("https://github.com/owner/repo/tree/main/skills/demo"),
+    ).toEqual({
+      kind: "github",
+      repoUrl: "https://github.com/owner/repo",
+      branch: "main",
+      path: "skills/demo",
+    });
+  });
+
+  it("末尾のスラッシュを落とす", () => {
+    expect(parseSkillSource("https://github.com/owner/repo/")).toEqual({
+      kind: "github",
+      repoUrl: "https://github.com/owner/repo",
+    });
+    expect(
+      parseSkillSource("https://github.com/owner/repo/tree/main/skills/demo/"),
+    ).toEqual({
+      kind: "github",
+      repoUrl: "https://github.com/owner/repo",
+      branch: "main",
+      path: "skills/demo",
+    });
+  });
+
+  it("GitHub でないものはローカルのフォルダとして扱う", () => {
+    expect(parseSkillSource("./skills/demo")).toEqual({
+      kind: "local",
+      path: "./skills/demo",
+    });
+  });
+});
+
+describe("findSkillFolders", () => {
+  it("自身と3段下までを探し、深すぎるものと .git は除く", () => {
+    const root = makeDir("ja-skills-find-");
+    writeSkill(root, "", skillText("root", "Root."));
+    const nested = writeSkill(root, "a/b", skillText("nested", "Nested."));
+    writeSkill(root, "a/b/c", skillText("deep", "Deep."));
+    writeSkill(root, "a/b/c/d", skillText("too-deep", "Too deep."));
+    writeSkill(root, ".git", skillText("git", "Git."));
+
+    const found = findSkillFolders(root);
+
+    expect(found).toContain(root);
+    expect(found).toContain(nested);
+    expect(found).toContain(join(root, "a/b/c"));
+    expect(found).not.toContain(join(root, "a/b/c/d"));
+    expect(found).not.toContain(join(root, ".git"));
   });
 });

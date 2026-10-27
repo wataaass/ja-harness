@@ -1,13 +1,18 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  cpSync,
   type Dirent,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { loadInstructions } from "../agent/instructions.js";
 import {
@@ -22,10 +27,19 @@ import { SYSTEM_PROMPT } from "../agent/prompt.js";
 import { createRepeatTracker } from "../agent/repeat.js";
 import {
   builtinSkillsDir,
+  findSkillFolders,
   formatSkillList,
   loadSkills,
+  parseSkill,
+  parseSkillSource,
+  readSkillFile,
+  type Skill,
 } from "../agent/skills.js";
-import { loadSettings } from "../cli/settings.js";
+import {
+  loadSettings,
+  readDisabledSkills,
+  updateDisabledSkills,
+} from "../cli/settings.js";
 import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
 import { createEstimator, estimateMessages } from "../context/tokens.js";
@@ -143,15 +157,29 @@ type PendingPlan = {
   reason: EditorState;
 };
 
+type SkillPickerItem = {
+  skill: Skill;
+  enabled: boolean;
+  locked: boolean;
+};
+
 type Picker =
   | { kind: "mode"; index: number }
   | { kind: "permission"; index: number }
   | { kind: "model"; modelIndex: number; effortIndex: number }
-  | { kind: "session"; sessions: SessionSummary[]; index: number };
+  | { kind: "session"; sessions: SessionSummary[]; index: number }
+  | { kind: "skills"; items: SkillPickerItem[]; index: number };
 
-type Warning = { text: string; onYes: () => void };
+type Warning = {
+  text: string;
+  onYes: () => void;
+  onNo?: () => void;
+  title?: string;
+  footer?: string;
+  lines?: string[];
+};
 
-type QueuedInput = { text: string; notice?: string };
+type QueuedInput = { text: string; content?: string; notice?: string };
 
 type Command = { name: string };
 
@@ -170,6 +198,7 @@ function commands(): Command[] {
     { name: "/details" },
     { name: "/undo" },
     { name: "/resume" },
+    { name: "/skills" },
     { name: "/clear" },
     { name: "/compact" },
     { name: "/summarize" },
@@ -254,7 +283,9 @@ export async function runApp(o: AppOptions): Promise<number> {
       cwd: o.cwd,
       home,
       builtinDir: builtinSkillsDir(),
-      disabled: settings.skills?.disabled ?? [],
+      disabled:
+        loadSettings({ cwd: o.cwd, home, env: o.env }).settings.skills
+          ?.disabled ?? [],
     });
   let skillState = loadSkillState();
   let systemContent =
@@ -572,6 +603,26 @@ export async function runApp(o: AppOptions): Promise<number> {
         theme,
       });
     }
+    if (current.kind === "skills") {
+      const body = current.items.map((item, index) => {
+        const mark = item.locked ? "[-]" : item.enabled ? "[x]" : "[ ]";
+        const line = `- ${item.skill.name}: ${item.skill.description}`;
+        const text = messages.app.picker.skillsRow(
+          mark,
+          item.skill.name,
+          item.skill.source,
+          String(estimate(line)),
+        );
+        return index === current.index ? theme.accent(text) : text;
+      });
+      return renderCard({
+        title: messages.app.picker.skillsTitle,
+        body,
+        footer: messages.app.picker.skillsFooter,
+        width: maxWidth,
+        theme,
+      });
+    }
     const info = MODELS[current.modelIndex] ?? MODELS[0];
     if (info === undefined) {
       return [];
@@ -795,9 +846,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     } else if (warning !== undefined) {
       lines.push(
         ...renderCard({
-          title: messages.app.permissionTitle,
-          body: modalBody([warning.text]),
-          footer: messages.app.warningFooter,
+          title: warning.title ?? messages.app.permissionTitle,
+          body: warning.lines ?? modalBody([warning.text]),
+          footer: warning.footer ?? messages.app.warningFooter,
           width: maxWidth,
           theme,
         }),
@@ -982,7 +1033,14 @@ export async function runApp(o: AppOptions): Promise<number> {
     if (!/^\/\S*$/.test(editor.text)) {
       return [];
     }
-    return commandList
+    const known = new Set(commandList.map((command) => command.name));
+    const items = [
+      ...commandList,
+      ...skillState.skills
+        .map((skill) => ({ name: `/${skill.name}` }))
+        .filter((command) => !known.has(command.name)),
+    ];
+    return items
       .filter((command) => command.name.startsWith(editor.text))
       .slice(0, 8);
   }
@@ -1350,7 +1408,9 @@ export async function runApp(o: AppOptions): Promise<number> {
       return;
     }
     if (key.type === "escape" || (key.type === "ctrl" && key.key === "d")) {
+      const current = warning;
       warning = undefined;
+      current.onNo?.();
       render();
     }
   }
@@ -1475,6 +1535,43 @@ export async function runApp(o: AppOptions): Promise<number> {
           return;
         }
         emit([messages.app.sessionContinue(chosen.turns)]);
+      }
+      return;
+    }
+
+    if (picker.kind === "skills") {
+      const length = picker.items.length;
+      if (length === 0) {
+        if (key.type === "enter") {
+          picker = undefined;
+          saveSkillSettings([]);
+        }
+        return;
+      }
+      if (key.type === "up") {
+        picker.index = (picker.index - 1 + length) % length;
+        render();
+        return;
+      }
+      if (key.type === "down") {
+        picker.index = (picker.index + 1) % length;
+        render();
+        return;
+      }
+      if (key.type === "char" && key.text.includes(" ")) {
+        const item = picker.items[picker.index];
+        if (item !== undefined && !item.locked) {
+          item.enabled = !item.enabled;
+        }
+        render();
+        return;
+      }
+      if (key.type === "enter") {
+        const disabled = picker.items
+          .filter((item) => !item.locked && !item.enabled)
+          .map((item) => item.skill.name);
+        picker = undefined;
+        saveSkillSettings(disabled);
       }
       return;
     }
@@ -1685,6 +1782,243 @@ export async function runApp(o: AppOptions): Promise<number> {
     render();
   }
 
+  function skillInvocation(text: string): string | undefined {
+    if (!text.startsWith("/")) {
+      return undefined;
+    }
+    const body = text.slice(1).trim();
+    const [name = "", ...rest] = body.split(/\s+/);
+    if (
+      name === "" ||
+      commandList.some((command) => command.name === `/${name}`)
+    ) {
+      return undefined;
+    }
+    const skill = skillState.skills.find(
+      (candidate) => candidate.name === name,
+    );
+    if (skill === undefined) {
+      return undefined;
+    }
+    const request = rest.join(" ").trim();
+    return `Follow the skill "${skill.name}" below.\n\n${readSkillFile(skill)}\n\nUser request: ${request === "" ? "(none)" : request}`;
+  }
+
+  function openSkillsPicker(): void {
+    const locked = new Set(
+      readDisabledSkills(join(o.cwd, ".ja-harness", "config.json")),
+    );
+    const disabled = new Set(skillState.disabled.map((skill) => skill.name));
+    const items = [...skillState.skills, ...skillState.disabled]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((skill) => ({
+        skill,
+        enabled: !disabled.has(skill.name),
+        locked: locked.has(skill.name),
+      }));
+    picker = { kind: "skills", items, index: 0 };
+    render();
+  }
+
+  function saveSkillSettings(disabled: string[]): void {
+    const path = join(home, ".ja-harness", "config.json");
+    let text: string | undefined;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        emit([theme.error(` ✕ ${messages.settings.unreadable(path)}`)]);
+        return;
+      }
+    }
+    try {
+      const next = updateDisabledSkills(text, disabled);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, next, "utf8");
+      emit([messages.app.picker.skillsSaved]);
+    } catch (error) {
+      emit([theme.warn(` ${errorMessage(error)}`)]);
+    }
+  }
+
+  function personalSkillNames(): Set<string> {
+    const names = new Set<string>();
+    const dir = join(home, ".ja-harness", "skills");
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return names;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      names.add(entry.name);
+      try {
+        const parsed = parseSkill(
+          readFileSync(join(dir, entry.name, "SKILL.md"), "utf8"),
+        );
+        if (parsed !== undefined) {
+          names.add(parsed.name);
+        }
+      } catch {}
+    }
+    return names;
+  }
+
+  function gitClone(args: string[]): Promise<string | undefined> {
+    return new Promise((settle) => {
+      let done = false;
+      let stderr = "";
+      const finish = (message?: string): void => {
+        if (done) {
+          return;
+        }
+        done = true;
+        settle(message);
+      };
+      const child = spawn("git", args, {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      child.stderr?.on("data", (chunk: string | Buffer) => {
+        stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      });
+      child.on("error", (error: NodeJS.ErrnoException) => {
+        finish(
+          error.code === "ENOENT"
+            ? messages.app.skillsInstall.noGit
+            : messages.app.skillsInstall.cloneFailed(error.message),
+        );
+      });
+      child.on("close", (code) => {
+        if (code === 0) {
+          finish(undefined);
+          return;
+        }
+        const line =
+          stderr
+            .replace(/\r\n/g, "\n")
+            .split("\n")
+            .map((part) => part.trim())
+            .find((part) => part !== "") ?? `exit ${code}`;
+        finish(messages.app.skillsInstall.cloneFailed(line));
+      });
+    });
+  }
+
+  async function installSkills(source: string): Promise<void> {
+    if (source.trim() === "") {
+      emit([messages.app.skillsInstall.noSource]);
+      return;
+    }
+    const parsed = parseSkillSource(source);
+    let temp: string | undefined;
+    busy = true;
+    render();
+    try {
+      let root: string;
+      if (parsed.kind === "github") {
+        temp = mkdtempSync(join(tmpdir(), "ja-harness-skill-"));
+        const args = ["clone", "--depth", "1"];
+        if (parsed.branch !== undefined) {
+          args.push("--branch", parsed.branch);
+        }
+        args.push(`${parsed.repoUrl}.git`, temp);
+        const failure = await gitClone(args);
+        if (failure !== undefined) {
+          emit([theme.warn(` ${failure}`)]);
+          return;
+        }
+        root = parsed.path === undefined ? temp : join(temp, parsed.path);
+      } else {
+        root = resolve(o.cwd, parsed.path);
+      }
+
+      const byName = new Map<
+        string,
+        { name: string; description: string; dir: string }
+      >();
+      for (const dir of findSkillFolders(root)) {
+        let text: string;
+        try {
+          text = readFileSync(join(dir, "SKILL.md"), "utf8");
+        } catch {
+          continue;
+        }
+        const skill = parseSkill(text);
+        if (skill === undefined) {
+          continue;
+        }
+        byName.set(skill.name, {
+          name: skill.name,
+          description: skill.description,
+          dir,
+        });
+      }
+      const found = [...byName.values()];
+      if (found.length === 0) {
+        emit([messages.app.skillsInstall.notFound]);
+        return;
+      }
+
+      const existing = personalSkillNames();
+      const rows = found.map((skill) =>
+        messages.app.skillsInstall.row(
+          skill.name,
+          skill.description,
+          existing.has(skill.name),
+        ),
+      );
+      await new Promise<void>((settle) => {
+        warning = {
+          text: "",
+          lines: rows,
+          title: messages.app.skillsInstall.title,
+          footer: messages.app.skillsInstall.footer,
+          onYes: () => {
+            try {
+              const personalDir = join(home, ".ja-harness", "skills");
+              mkdirSync(personalDir, { recursive: true });
+              for (const skill of found) {
+                const dest = join(personalDir, skill.name);
+                rmSync(dest, { recursive: true, force: true });
+                cpSync(skill.dir, dest, {
+                  recursive: true,
+                  filter: (from) => basename(from) !== ".git",
+                });
+              }
+              emit([
+                messages.app.skillsInstall.installed(
+                  found.map((skill) => skill.name).join(", "),
+                ),
+              ]);
+            } catch (error) {
+              emit([
+                theme.error(
+                  ` ✕ ${messages.app.skillsInstall.copyFailed(
+                    errorMessage(error).split(/\r?\n/)[0] ?? "",
+                  )}`,
+                ),
+              ]);
+            }
+            settle();
+          },
+          onNo: () => {
+            settle();
+          },
+        };
+        render();
+      });
+    } finally {
+      if (temp !== undefined) {
+        rmSync(temp, { recursive: true, force: true });
+      }
+      busy = false;
+      render();
+    }
+  }
+
   function handleCommand(text: string): boolean {
     if (!text.startsWith("/")) {
       return false;
@@ -1776,6 +2110,19 @@ export async function runApp(o: AppOptions): Promise<number> {
         render();
         return true;
       }
+      case "/skills": {
+        if (arg === "add" || arg.startsWith("add ")) {
+          const source = arg.slice(3).trim();
+          if (source === "") {
+            emit([messages.app.skillsInstall.noSource]);
+          } else {
+            void installSkills(source);
+          }
+          return true;
+        }
+        openSkillsPicker();
+        return true;
+      }
       case "/clear": {
         skillState = loadSkillState();
         systemContent =
@@ -1812,21 +2159,23 @@ export async function runApp(o: AppOptions): Promise<number> {
       clearTimeout(exitTimer);
       exitTimer = undefined;
     }
-    if (handleCommand(text)) {
+    const invocation = skillInvocation(text);
+    if (invocation === undefined && handleCommand(text)) {
       render();
       return;
     }
+    const content = invocation ?? text;
     history.push(text);
     lastSubmitted = text;
     const noticeText = pendingNotice;
     pendingNotice = undefined;
     if (busy) {
-      queue.push({ text, notice: noticeText });
+      queue.push({ text, content, notice: noticeText });
       render();
       return;
     }
     printUser(text, false);
-    void startTurn(text, noticeText);
+    void startTurn(content, noticeText);
   }
 
   function handleKey(key: Key): void {
@@ -1902,7 +2251,12 @@ export async function runApp(o: AppOptions): Promise<number> {
         editor = { text: "", cursor: 0 };
         slashIndex = 0;
         if (item !== undefined) {
-          handleCommand(item.name);
+          if (skillInvocation(item.name) === undefined) {
+            handleCommand(item.name);
+          } else {
+            submit(item.name);
+            return;
+          }
         }
         render();
         return;
@@ -2140,7 +2494,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         delivered.push(notice(item.notice));
       }
       printUser(item.text, true);
-      delivered.push({ role: "user", content: item.text });
+      delivered.push({ role: "user", content: item.content ?? item.text });
     }
     render();
     return delivered;
@@ -2266,7 +2620,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         const next = queue.shift();
         if (next !== undefined) {
           printUser(next.text, true);
-          void startTurn(next.text, next.notice);
+          void startTurn(next.content ?? next.text, next.notice);
         }
       }
     }

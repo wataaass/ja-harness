@@ -271,6 +271,55 @@ function applyEnv(
   return next;
 }
 
+export function readDisabledSkills(path: string): string[] {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (!isObject(parsed) || !isObject(parsed.skills)) {
+    return [];
+  }
+  const disabled = parsed.skills.disabled;
+  if (
+    !Array.isArray(disabled) ||
+    !disabled.every((entry) => typeof entry === "string")
+  ) {
+    return [];
+  }
+  return disabled.filter((entry) => entry.trim() !== "");
+}
+
+export function updateDisabledSkills(
+  jsonText: string | undefined,
+  disabled: string[],
+): string {
+  const messages = getMessages();
+  let parsed: unknown = {};
+  if (jsonText !== undefined) {
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      throw new Error(messages.settings.brokenSave);
+    }
+  }
+  if (!isObject(parsed)) {
+    throw new Error(messages.settings.shapeSave);
+  }
+  const next = { ...parsed };
+  const skills = isObject(next.skills) ? { ...next.skills } : {};
+  skills.disabled = disabled;
+  next.skills = skills;
+  return `${JSON.stringify(next, null, 2)}\n`;
+}
+
 export function loadSettings(o: LoadSettingsOptions): {
   settings: Settings;
   warnings: string[];
