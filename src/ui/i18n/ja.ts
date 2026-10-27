@@ -91,7 +91,7 @@ export const ja = {
 
   helpLines: [
     " キー",
-    "  Enter 送る  Shift+Enter か Ctrl+J 改行  ↑↓ 前の入力",
+    "  Enter 送る  Shift+Enter 改行（使えない端末では Ctrl+J）  ↑↓ 前の入力",
     "  Shift+Tab モード  Ctrl+O 途中経過  Ctrl+R 変更の見直し  Ctrl+C 入力を消す  Ctrl+D 2回で終了",
     "  Esc 止める・閉じる  Tab 候補を入れる",
     " コマンド",

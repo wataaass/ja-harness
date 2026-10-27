@@ -1069,6 +1069,17 @@ export async function runApp(o: AppOptions): Promise<number> {
     return confirm(request);
   };
 
+  let terminalRestored = false;
+
+  function restoreTerminal(): void {
+    if (terminalRestored) {
+      return;
+    }
+    terminalRestored = true;
+    o.input.setRawMode?.(false);
+    o.output.write("\x1b[?2004l\x1b[>4;0m");
+  }
+
   function finish(code: number): void {
     if (closed) {
       return;
@@ -1097,8 +1108,8 @@ export async function runApp(o: AppOptions): Promise<number> {
     abort?.abort();
     o.input.off?.("data", onData);
     o.output.off?.("resize", onResize);
-    o.input.setRawMode?.(false);
-    o.output.write("\x1b[?2004l");
+    process.off("exit", restoreTerminal);
+    restoreTerminal();
     screen.close();
     resolveRun(code);
   }
@@ -2243,8 +2254,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     }
   }
 
+  process.once("exit", restoreTerminal);
   o.input.setRawMode?.(true);
-  o.output.write("\x1b[?2004h");
+  o.output.write("\x1b[?2004h\x1b[>4;1m");
 
   const knownSessions = listSessions(sessionsDir, o.cwd);
   if (o.resume !== undefined) {

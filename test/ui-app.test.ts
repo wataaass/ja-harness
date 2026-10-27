@@ -540,6 +540,27 @@ describe("runApp", () => {
     expect(input.raw).toBe(false);
     expect(stripAnsi(output.text)).toContain("ja-harness 0.1");
   });
+
+  it("起動時に Shift+Enter を改行にし、終了時に元へ戻す", async () => {
+    const { complete } = sequence([]);
+    const { input, output, result } = start({ complete });
+
+    expect(output.text).toContain("\x1b[>4;1m");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(output.text).toContain("\x1b[>4;0m");
+  });
+
+  it("Shift+Enter の列で入力欄が改行される", async () => {
+    const { complete, calls } = sequence([answer("了解")]);
+    const { input, output, result } = start({ complete });
+
+    input.send("a\x1b[27;2;13~b\r");
+    await waitFor(output, "了解");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(calls[0]?.at(-1)).toEqual({ role: "user", content: "a\nb" });
+  });
 });
 
 describe("runApp の追加機能", () => {
