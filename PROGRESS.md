@@ -10,7 +10,7 @@
 - PR #4（claude/tools、#3 の上、下書き）: 基本の道具 read・list・grep（rg があれば使い、なければ Node）・edit（str_replace、字下げを無視したゆるい一致）・write（新しいファイルだけ）・shell（プロセスグループごと止める）。CLI につなぎ、編集とシェルの前に端末で y/n を聞く（仮。差分のまとまりごとの採否は対話の画面で作る）。テスト212件。本物の API で読み取り・編集・シェル・確認中の Ctrl+C を確認済み
 - PR #5（claude/bench、#4 の上、下書き）: `ja-harness bench`（課題×条件×回、隠した grade で採点、`--validate`・`--rerun-errors`・`--prepare`/`--grade`）と課題8件。テスト249件。結果は `bench/RESULTS.md`
   - 2026-10-27: DeepSeek・MiMo・Qwen の各72回で品質は落ちていない。料金は DeepSeek −17%・MiMo −15%、Qwen は +6%（読み直しが増えた）。`docs/design/context.md` の「本物の API での品質と料金」
-- PR #6（claude/ui、#5 の上、下書き）: 対話の画面。`docs/design/ui.md` の項目はすべて入れた（モード・権限・計画・まとまりごとの採否・Ctrl+R・`/undo`・`/` と `@`・`/model`・セッションの保存と再開・`/context`・`/compact`・i18n）。テスト464件。疑似端末と本物の API で確認済み
+- PR #6（claude/ui、#5 の上、下書き）: 対話の画面。`docs/design/ui.md` の項目はすべて入れた（モード・権限・計画・まとまりごとの採否・Ctrl+R・`/undo`・`/` と `@`・`/model`・セッションの保存と再開・`/context`・`/compact`・i18n・設定ファイル `.ja-harness/config.json`）。テスト477件。疑似端末と本物の API で確認済み。疑似端末で、分かれて届く UTF-8・Shift+Enter（kitty と xterm の2種類）・Ctrl+J・貼り付け・色（24ビット・256色・NO_COLOR・明るい背景）も確かめた
 - PR #1（claude/design-ui、下書き）: v0.1 の設計
   - `docs/design/ui.md`: 画面（流れる形＋状態の行）、3つのモード、差分での確認、`/undo`、入力（IME の Enter）、`/` コマンド、セッションの保存、言語
   - `docs/design/context.md`: 往復、価格で決める masking、要約（64Kか上限の50%）、道具の結果の上限、キャッシュを壊さない決まりと hit 率の表示、そのほかの削減18項目、言語の設定、文字のそろえ方、設定ファイルの例
@@ -22,8 +22,7 @@
 1. 本人が対話の画面を実際の端末で触って確かめる（日本語入力の Enter、端末ごとの Shift+Enter、色）
 2. 道具の結果の上限（2,000・8,000）を価格から決める（キャッシュの割引が小さいモデルでは、上限を上げて読み直しを減らすほうが安い可能性）。決める前に本人に確認する
 3. bench の課題をもう少し難しくする（DeepSeek は3条件とも9割以上通る）
-4. 設定ファイル（`.ja-harness/config.json`）: 既定の権限・`ui.theme`・言語。いまは環境変数だけ
-5. v0.1 の残り: MCP 対応（nihongo-kit を標準で入れる）、subagent、リポジトリの地図など `docs/design/context.md` の「そのほかの削減」
+4. v0.1 の残り: MCP 対応（nihongo-kit を標準で入れる）、subagent、リポジトリの地図など `docs/design/context.md` の「そのほかの削減」
 
 ## 覚えておくこと
 - 目的は料金の最適化（トークンの数ではない）。DeepSeek V4.1 Flash は cache hit が miss の約50分の1
