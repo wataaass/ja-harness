@@ -46,17 +46,23 @@ async function main(): Promise<number> {
   if (args.length === 0) {
     if (process.stdin.isTTY === true && process.stdout.isTTY === true) {
       const { contextWindow, ...clientConfig } = readConfig(process.env);
-      const client = createClient({
-        ...clientConfig,
-        headers: { "x-opencode-session": randomUUID() },
-      });
+      const session = randomUUID();
+      const makeComplete = (model: string, effort?: string) => {
+        const client = createClient({
+          ...clientConfig,
+          model,
+          ...(effort === undefined ? {} : { reasoningEffort: effort }),
+          headers: { "x-opencode-session": session },
+        });
+        return client.complete;
+      };
       return runApp({
         input: process.stdin,
         output: process.stdout,
         env: process.env,
         cwd: process.cwd(),
         home: process.env.HOME,
-        complete: client.complete,
+        makeComplete,
         contextWindow,
         model: clientConfig.model,
         version: VERSION,
@@ -77,6 +83,9 @@ async function main(): Promise<number> {
   const { contextWindow, ...clientConfig } = readConfig(process.env);
   const client = createClient({
     ...clientConfig,
+    ...(process.env.JA_HARNESS_EFFORT === undefined
+      ? {}
+      : { reasoningEffort: process.env.JA_HARNESS_EFFORT }),
     headers: { "x-opencode-session": randomUUID() },
   });
   const estimate = createEstimator();

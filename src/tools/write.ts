@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Tool } from "../agent/loop.js";
 import { type Confirm, toDecision } from "./confirm.js";
-import { displayPath, resolvePath } from "./path.js";
+import { displayPath, isOutsidePath, resolvePath } from "./path.js";
 
 const DETAIL_LINES = 40;
 
@@ -75,6 +75,7 @@ export function createWriteTool(cwd: string, confirm: Confirm): Tool {
           tool: "write",
           title: `${path} を作ります（${lines.length}行）`,
           detail,
+          ...(isOutsidePath(cwd, abs) ? { outside: true } : {}),
         }),
       );
       if (!decision.allow) {

@@ -1,3 +1,13 @@
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Complete, Tool } from "../src/agent/loop.js";
 import type { Completion, Message, Usage } from "../src/llm/types.js";
@@ -116,27 +126,39 @@ function sequence(items: Completion[]): {
 }
 
 function start(options: {
-  complete: Complete;
+  complete?: Complete;
+  makeComplete?: (model: string, effort?: string) => Complete;
   createTools?: (confirm: Confirm) => Tool[];
   columns?: number;
+  cwd?: string;
+  model?: string;
 }) {
   const input = new FakeInput();
   const output = new FakeOutput();
   if (options.columns !== undefined) {
     output.columns = options.columns;
   }
+  const complete = options.complete;
+  const makeComplete =
+    options.makeComplete ??
+    (() => {
+      if (complete === undefined) {
+        throw new Error("complete がありません");
+      }
+      return complete;
+    });
   const result = runApp({
     input,
     output,
     env: {},
-    cwd: "/work",
+    cwd: options.cwd ?? "/work",
     home: "/home/user",
-    complete: options.complete,
+    makeComplete,
     ...(options.createTools === undefined
       ? {}
       : { createTools: options.createTools }),
     contextWindow: 100000,
-    model: "deepseek-v4.1-flash",
+    model: options.model ?? "deepseek-v4.1-flash",
     version: "0.1",
     timing: { escape: 5, doubleEscape: 100, exit: 200 },
   });
@@ -319,6 +341,26 @@ describe("runApp", () => {
     expect(seen).toEqual([{ allow: false, reason: "違います" }]);
   });
 
+  it("確認のカード中の Ctrl+D は却下として扱う", async () => {
+    const seen: Decision[] = [];
+    const { complete } = sequence([
+      call("shell", { command: "echo hi" }),
+      answer("done"),
+    ]);
+    const { input, output, result } = start({
+      complete,
+      createTools: confirmTool(seen),
+    });
+
+    input.send("run\r");
+    await waitFor(output, "Enter 許可");
+    input.send("\x04");
+    await waitFor(output, "done");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(seen).toEqual([{ allow: false }]);
+  });
+
   it("作業中の submit は待ち行列に入り、次の区切りで渡る", async () => {
     let release: (() => void) | undefined;
     const first = new Promise<Completion>((resolve) => {
@@ -398,5 +440,434 @@ describe("runApp", () => {
     expect(await result).toBe(0);
     expect(input.raw).toBe(false);
     expect(stripAnsi(output.text)).toContain("ja-harness 0.1");
+  });
+});
+
+describe("runApp の追加機能", () => {
+  it("Shift+Tab でモードが回り、次の発言の前に notice が入る", async () => {
+    const { complete, calls } = sequence([answer("了解")]);
+    const { input, output, result } = start({ complete });
+
+    input.send("\x1b[Z");
+    await waitFor(output, "計画");
+    input.send("hi\r");
+    await waitFor(output, "了解");
+
+    expect(await close(input, output, result)).toBe(0);
+    const tail = calls[0]?.slice(-2) ?? [];
+    expect(tail[0]?.role).toBe("user");
+    expect(tail[0]?.content).toContain("Plan mode");
+    expect(tail[1]).toEqual({ role: "user", content: "hi" });
+  });
+
+  it("計画のモードでは edit を実行せずに断る", async () => {
+    let executes = 0;
+    const editTool: Tool = {
+      name: "edit",
+      description: "edit",
+      parameters: {},
+      execute: async () => {
+        executes += 1;
+        return "ok";
+      },
+    };
+    const { complete, calls } = sequence([call("edit", {}), answer("done")]);
+    const { input, output, result } = start({
+      complete,
+      createTools: () => [editTool],
+    });
+
+    input.send("\x1b[Z");
+    await waitFor(output, "計画");
+    input.send("go\r");
+    await waitFor(output, "done");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(executes).toBe(0);
+    const toolMessage = calls[1]?.find((message) => message.role === "tool");
+    expect(toolMessage?.content).toBe(
+      "Not allowed in plan mode. Only read, list and grep are allowed.",
+    );
+  });
+
+  it("submit_plan を承認すると保存して実行モードに戻る", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-plan-"));
+    try {
+      const markdown = "# 計画\n\n- 直す";
+      const { complete, calls } = sequence([
+        call("submit_plan", { markdown }),
+        answer("始めます"),
+      ]);
+      const { input, output, result } = start({ complete, cwd });
+
+      input.send("\x1b[Z");
+      await waitFor(output, "計画");
+      input.send("plan please\r");
+      await waitFor(output, "計画  .ja-harness/plans/");
+
+      const dir = join(cwd, ".ja-harness", "plans");
+      const files = readdirSync(dir);
+      expect(files).toHaveLength(1);
+      expect(readFileSync(join(dir, files[0] ?? ""), "utf8")).toBe(markdown);
+
+      input.send("\r");
+      await waitFor(output, "始めます");
+      expect(await close(input, output, result)).toBe(0);
+
+      const toolMessage = calls[1]?.find((message) => message.role === "tool");
+      expect(toolMessage?.content).toContain("The user approved the plan.");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("submit_plan の「直す」は理由を道具に返す", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-plan-"));
+    try {
+      const { complete, calls } = sequence([
+        call("submit_plan", { markdown: "# 計画" }),
+        answer("直します"),
+      ]);
+      const { input, output, result } = start({ complete, cwd });
+
+      input.send("\x1b[Z");
+      await waitFor(output, "計画");
+      input.send("plan please\r");
+      await waitFor(output, "承認して実行");
+      input.send("e");
+      await waitFor(output, "直す理由");
+      input.send("もっと詳しく\r");
+      await waitFor(output, "直します");
+
+      expect(await close(input, output, result)).toBe(0);
+      const toolMessage = calls[1]?.find((message) => message.role === "tool");
+      expect(toolMessage?.content).toBe(
+        "The user asked for changes: もっと詳しく. Revise the plan and call submit_plan again.",
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("submit_plan の却下は計画を止める文を返す", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-plan-"));
+    try {
+      const { complete, calls } = sequence([
+        call("submit_plan", { markdown: "# 計画" }),
+        answer("わかりました"),
+      ]);
+      const { input, output, result } = start({ complete, cwd });
+
+      input.send("\x1b[Z");
+      await waitFor(output, "計画");
+      input.send("plan please\r");
+      await waitFor(output, "却下");
+      input.send("\x1b");
+      await waitFor(output, "わかりました");
+
+      expect(await close(input, output, result)).toBe(0);
+      const toolMessage = calls[1]?.find((message) => message.role === "tool");
+      expect(toolMessage?.content).toContain("The user rejected the plan.");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("編集は自動では edit を聞かず、shell は聞く", async () => {
+    const seen: { tool: string; allow: boolean }[] = [];
+    const makeTool = (confirm: Confirm, name: string): Tool => ({
+      name,
+      description: name,
+      parameters: {},
+      execute: async () => {
+        const decision = await confirm({
+          tool: name,
+          title: `${name} を実行`,
+          detail: name,
+        });
+        seen.push({
+          tool: name,
+          allow: typeof decision === "boolean" ? decision : decision.allow,
+        });
+        return "ok";
+      },
+    });
+    const { complete } = sequence([
+      call("edit", {}, "call-edit"),
+      call("shell", {}, "call-shell"),
+      answer("done"),
+    ]);
+    const { input, output, result } = start({
+      complete,
+      createTools: (confirm) => [
+        makeTool(confirm, "edit"),
+        makeTool(confirm, "shell"),
+      ],
+    });
+
+    input.send("/permission 編集は自動\r");
+    await waitFor(output, "編集は自動");
+    input.send("go\r");
+    await waitFor(output, "Enter 許可");
+    input.send("\r");
+    await waitFor(output, "done");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(seen).toEqual([
+      { tool: "edit", allow: true },
+      { tool: "shell", allow: true },
+    ]);
+    expect(stripAnsi(output.text)).not.toContain("edit を実行");
+  });
+
+  it("作業フォルダの外の edit は自動でも必ず聞く", async () => {
+    const seen: boolean[] = [];
+    const { complete } = sequence([call("edit", {}, "call-1"), answer("done")]);
+    const { input, output, result } = start({
+      complete,
+      createTools: (confirm) => [
+        {
+          name: "edit",
+          description: "edit",
+          parameters: {},
+          execute: async () => {
+            const decision = await confirm({
+              tool: "edit",
+              title: "外を編集",
+              detail: "x",
+              outside: true,
+            });
+            seen.push(
+              typeof decision === "boolean" ? decision : decision.allow,
+            );
+            return "ok";
+          },
+        },
+      ],
+    });
+
+    input.send("/permission 編集は自動\r");
+    await waitFor(output, "編集は自動");
+    input.send("go\r");
+    await waitFor(output, "Enter 許可");
+    input.send("\r");
+    await waitFor(output, "done");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(seen).toEqual([true]);
+    expect(stripAnsi(output.text)).toContain("外を編集");
+  });
+
+  it("すべて自動はもう一度確かめてから効く", async () => {
+    const seen: boolean[] = [];
+    const shell: Tool = {
+      name: "shell",
+      description: "shell",
+      parameters: {},
+      execute: async () => "ok",
+    };
+    const { complete } = sequence([
+      call("shell", {}, "call-1"),
+      answer("done"),
+    ]);
+    const { input, output, result } = start({
+      complete,
+      createTools: (confirm) => [
+        {
+          ...shell,
+          execute: async () => {
+            const decision = await confirm({
+              tool: "shell",
+              title: "コマンドを実行します",
+              detail: "echo hi",
+            });
+            seen.push(
+              typeof decision === "boolean" ? decision : decision.allow,
+            );
+            return "ok";
+          },
+        },
+      ],
+    });
+
+    input.send("/permission すべて自動\r");
+    await waitFor(output, "シェルのコマンドも確認せずに実行します");
+    input.send("\r");
+    await waitFor(output, "すべて自動");
+    input.send("go\r");
+    await waitFor(output, "done");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(seen).toEqual([true]);
+    expect(stripAnsi(output.text)).not.toContain("Enter 許可");
+  });
+
+  it("/ の候補を Tab で入れて Enter で実行する", async () => {
+    const { complete } = sequence([]);
+    const { input, output, result } = start({ complete });
+
+    input.send("/mo");
+    await waitFor(output, "/mode");
+    await waitFor(output, "/model");
+    input.send("\t");
+    await waitFor(output, "› /mode");
+    input.send("\r");
+    await waitFor(output, "Enter 決める");
+
+    input.send("\x1b");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await close(input, output, result)).toBe(0);
+  });
+
+  it("知らないコマンドを知らせる", async () => {
+    const { complete } = sequence([]);
+    const { input, output, result } = start({ complete });
+
+    input.send("/nope\r");
+    await waitFor(output, "知らないコマンドです: /nope");
+    expect(await close(input, output, result)).toBe(0);
+  });
+
+  it("@ の候補を Tab で入れてそのまま送る", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-at-"));
+    try {
+      mkdirSync(join(cwd, "src"));
+      mkdirSync(join(cwd, "node_modules"));
+      writeFileSync(join(cwd, "src", "app.ts"), "const a = 1;\n");
+      writeFileSync(join(cwd, "src", "other.ts"), "const b = 2;\n");
+      writeFileSync(join(cwd, "node_modules", "hidden.ts"), "");
+      writeFileSync(join(cwd, "README.md"), "readme\n");
+      const { complete, calls } = sequence([answer("ok")]);
+      const { input, output, result } = start({ complete, cwd });
+
+      input.send("@ap");
+      await waitFor(output, "@src/app.ts");
+      input.send("\t");
+      await waitFor(output, "› @src/app.ts ");
+      input.send("\r");
+      await waitFor(output, "ok");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(calls[0]?.at(-1)).toEqual({
+        role: "user",
+        content: "@src/app.ts ",
+      });
+      expect(stripAnsi(output.text)).not.toContain("node_modules");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/model で次のリクエストのモデルと effort が変わる", async () => {
+    const seen: { model: string; effort?: string }[] = [];
+    const items = [answer("first"), answer("second")];
+    const makeComplete = (model: string, effort?: string): Complete => {
+      return async (_messages, _tools, cb) => {
+        seen.push({ model, effort });
+        const item = items.shift();
+        if (item === undefined) {
+          throw new Error("想定より多く complete が呼ばれた");
+        }
+        if (item.message.content !== "") {
+          cb?.onText(item.message.content);
+        }
+        return item;
+      };
+    };
+    const { input, output, result } = start({ makeComplete });
+
+    input.send("one\r");
+    await waitFor(output, "first");
+    input.send("/model\r");
+    await waitFor(output, "推論の量");
+    input.send("\x1b[B");
+    input.send("\x1b[D");
+    input.send("\r");
+    await waitFor(output, "モデルを変えました");
+    input.send("two\r");
+    await waitFor(output, "second");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(seen).toEqual([
+      { model: "deepseek-v4.1-flash", effort: "high" },
+      { model: "deepseek-v4-pro", effort: "medium" },
+    ]);
+  });
+
+  it("/details で道具の結果の先頭を出す", async () => {
+    const { complete } = sequence([
+      call("read", { paths: ["src/app.ts"] }),
+      answer("done"),
+    ]);
+    const { input, output, result } = start({
+      complete,
+      createTools: () => [readTool()],
+    });
+
+    input.send("/details\r");
+    await waitFor(output, "途中経過: 詳しく");
+    input.send("go\r");
+    await waitFor(output, "1\tconst a = 1;");
+
+    expect(await close(input, output, result)).toBe(0);
+  });
+
+  it("中断のあとの次の発言は修復された messages で送られる", async () => {
+    const calls: Message[][] = [];
+    let count = 0;
+    const makeComplete = (): Complete => {
+      return async (messages, _tools, cb) => {
+        calls.push(structuredClone(messages));
+        count += 1;
+        if (count === 1) {
+          return call("slow", {});
+        }
+        cb?.onText("again ok");
+        return answer("again ok");
+      };
+    };
+    const slow: Tool = {
+      name: "slow",
+      description: "slow",
+      parameters: {},
+      execute: (_args, signal) =>
+        new Promise((_resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new Error("aborted"));
+            return;
+          }
+          signal?.addEventListener(
+            "abort",
+            () => reject(new Error("aborted")),
+            {
+              once: true,
+            },
+          );
+        }),
+    };
+    const { input, output, result } = start({
+      makeComplete,
+      createTools: () => [slow],
+    });
+
+    input.send("start\r");
+    await waitFor(output, "考えています");
+    input.send("\x1b");
+    await waitFor(output, "止めました");
+    input.send("again\r");
+    await waitFor(output, "again ok");
+
+    expect(await close(input, output, result)).toBe(0);
+    const second = calls[1] ?? [];
+    const toolIndex = second.findIndex((message) => message.role === "tool");
+    expect(second[toolIndex]).toEqual({
+      role: "tool",
+      toolCallId: "call-1",
+      content: "Interrupted by the user.",
+    });
+    expect(second[toolIndex + 1]).toEqual({
+      role: "user",
+      content: "again",
+    });
   });
 });

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import type { Tool } from "../agent/loop.js";
 import { type Confirm, toDecision } from "./confirm.js";
 import { formatDiff } from "./diff.js";
-import { displayPath, resolvePath } from "./path.js";
+import { displayPath, isOutsidePath, resolvePath } from "./path.js";
 
 export type Edit = {
   oldText: string;
@@ -375,6 +375,7 @@ export function createEditTool(cwd: string, confirm: Confirm): Tool {
           tool: "edit",
           title: `${path} を編集します`,
           detail: formatDiff(path, normalized, updated),
+          ...(isOutsidePath(cwd, abs) ? { outside: true } : {}),
         }),
       );
       if (!decision.allow) {

@@ -454,6 +454,29 @@ describe("complete", () => {
     ]);
   });
 
+  it("reasoningEffort があれば reasoning_effort を入れる", async () => {
+    const { fetch, calls } = mockFetch(
+      responseFromChunks([
+        sse({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+        "data: [DONE]\n\n",
+      ]),
+    );
+    const client = createClient({
+      baseUrl: "https://example.test/v1",
+      model: "test-model",
+      reasoningEffort: "low",
+      fetch,
+    });
+
+    await client.complete([{ role: "user", content: "hi" }], []);
+
+    const body = JSON.parse(calls[0].init?.body as string) as Record<
+      string,
+      unknown
+    >;
+    expect(body.reasoning_effort).toBe("low");
+  });
+
   it("ヘッダーを送る", async () => {
     const { fetch, calls } = mockFetch(
       responseFromChunks([

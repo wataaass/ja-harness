@@ -36,6 +36,8 @@ export function summarizeStart(name: string, args: unknown): string {
       return typeof args.command === "string"
         ? (args.command.split(/\r?\n/)[0] ?? "")
         : "";
+    case "submit_plan":
+      return "計画";
     default:
       return name;
   }

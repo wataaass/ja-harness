@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Complete, LoopEvent, Tool } from "../src/agent/loop.js";
-import { runTurn } from "../src/agent/loop.js";
+import { repairMessages, runTurn } from "../src/agent/loop.js";
 import { createRepeatTracker } from "../src/agent/repeat.js";
 import type { StepPrep } from "../src/context/manager.js";
 import type {
@@ -753,6 +753,59 @@ describe("runTurn", () => {
     });
 
     expect(drains).toBe(0);
+    expect(messages).toHaveLength(2);
+  });
+});
+
+describe("repairMessages", () => {
+  it("結果のない toolCalls に中断の結果を足す", () => {
+    const messages: Message[] = [
+      { role: "user", content: "はじめ" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "a", name: "read", arguments: "{}" },
+          { id: "b", name: "grep", arguments: "{}" },
+        ],
+      },
+    ];
+    repairMessages(messages);
+    expect(messages.slice(-2)).toEqual([
+      { role: "tool", toolCallId: "a", content: "Interrupted by the user." },
+      { role: "tool", toolCallId: "b", content: "Interrupted by the user." },
+    ]);
+  });
+
+  it("結果があるものは足さず、二度呼んでも増やさない", () => {
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "a", name: "read", arguments: "{}" },
+          { id: "b", name: "read", arguments: "{}" },
+        ],
+      },
+      { role: "tool", toolCallId: "a", content: "ok" },
+    ];
+    repairMessages(messages);
+    expect(messages).toHaveLength(3);
+    expect(messages[2]).toEqual({
+      role: "tool",
+      toolCallId: "b",
+      content: "Interrupted by the user.",
+    });
+    repairMessages(messages);
+    expect(messages).toHaveLength(3);
+  });
+
+  it("末尾に toolCalls つきの assistant がなければ何もしない", () => {
+    const messages: Message[] = [
+      { role: "user", content: "はじめ" },
+      { role: "assistant", content: "答え" },
+    ];
+    expect(repairMessages(messages)).toBe(messages);
     expect(messages).toHaveLength(2);
   });
 });

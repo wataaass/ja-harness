@@ -2,6 +2,7 @@ export type ConfirmRequest = {
   tool: string;
   title: string;
   detail: string;
+  outside?: boolean;
 };
 
 export type Decision = {

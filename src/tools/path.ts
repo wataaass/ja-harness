@@ -8,6 +8,13 @@ export function resolvePath(cwd: string, input: string): string {
   return isAbsolute(input) ? normalize(input) : resolve(cwd, input);
 }
 
+export function isOutsidePath(cwd: string, abs: string): boolean {
+  const rel = relative(cwd, abs);
+  return (
+    rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)
+  );
+}
+
 export function displayPath(cwd: string, abs: string): string {
   const rel = relative(cwd, abs);
   const outside =

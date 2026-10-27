@@ -49,6 +49,45 @@ export type RunResult = {
   usage: Usage;
 };
 
+export function repairMessages(messages: Message[]): Message[] {
+  let assistantIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message !== undefined &&
+      message.role === "assistant" &&
+      message.toolCalls !== undefined
+    ) {
+      assistantIndex = index;
+      break;
+    }
+  }
+  if (assistantIndex === -1) {
+    return messages;
+  }
+  const assistant = messages[assistantIndex];
+  if (assistant === undefined || assistant.role !== "assistant") {
+    return messages;
+  }
+  const resolved = new Set<string>();
+  for (let index = assistantIndex + 1; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message !== undefined && message.role === "tool") {
+      resolved.add(message.toolCallId);
+    }
+  }
+  for (const call of assistant.toolCalls ?? []) {
+    if (!resolved.has(call.id)) {
+      messages.push({
+        role: "tool",
+        toolCallId: call.id,
+        content: "Interrupted by the user.",
+      });
+    }
+  }
+  return messages;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

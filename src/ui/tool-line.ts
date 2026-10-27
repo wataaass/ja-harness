@@ -9,6 +9,7 @@ const MARKS: Record<string, string> = {
   write: "作",
   shell: "実",
   plan: "計",
+  submit_plan: "計",
   ask: "問",
 };
 

@@ -136,6 +136,7 @@ export type ClientOptions = {
   headers?: Record<string, string>;
   fetch?: typeof fetch;
   maxTokens?: number;
+  reasoningEffort?: string;
 };
 
 type CompleteCallback = {
@@ -174,6 +175,9 @@ export function createClient(opts: ClientOptions) {
     }
     if (opts.maxTokens !== undefined) {
       body.max_tokens = opts.maxTokens;
+    }
+    if (opts.reasoningEffort !== undefined) {
+      body.reasoning_effort = opts.reasoningEffort;
     }
     body.stream = true;
     body.stream_options = { include_usage: true };

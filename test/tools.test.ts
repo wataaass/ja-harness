@@ -13,6 +13,7 @@ describe("createTools", () => {
       "edit",
       "write",
       "shell",
+      "submit_plan",
     ]);
   });
 });
