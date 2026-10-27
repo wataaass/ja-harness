@@ -7,7 +7,7 @@ const plain = createTheme({ env: {}, isTTY: false });
 
 function status(overrides: Record<string, unknown> = {}) {
   return renderStatus({
-    mode: "実行",
+    mode: "Agent",
     permission: "確認する",
     model: "deepseek-v4.1-flash",
     effort: "high",
@@ -21,15 +21,15 @@ function status(overrides: Record<string, unknown> = {}) {
 }
 
 describe("renderStatus", () => {
-  it("モード・権限・モデル・文脈・料金・メーターを並べる", () => {
+  it("モード・権限・モデル・Context・料金・メーターを並べる", () => {
     expect(status()).toBe(
-      " 実行  確認する  deepseek-v4.1-flash（high）  文脈 12%  0.003ドル ▰▰▰▰▱ 87%",
+      " Agent  確認する  deepseek-v4.1-flash（high）  Context 12%  0.003ドル ▰▰▰▰▱ 87%",
     );
   });
 
   it("effort がなければモデル名だけ", () => {
     expect(status({ effort: undefined })).toContain(
-      "  deepseek-v4.1-flash  文脈",
+      "  deepseek-v4.1-flash  Context",
     );
   });
 
@@ -51,12 +51,12 @@ describe("renderStatus", () => {
     expect(stringWidth(line)).toBeLessThanOrEqual(30);
   });
 
-  it("1%未満の文脈は <1% と出す", () => {
-    expect(status({ contextRatio: 0.004 })).toContain("文脈 <1%");
+  it("1%未満の Context は <1% と出す", () => {
+    expect(status({ contextRatio: 0.004 })).toContain("Context <1%");
   });
 
-  it("文脈が0なら 0% と出す", () => {
-    expect(status({ contextRatio: 0 })).toContain("文脈 0%");
+  it("Context が0なら 0% と出す", () => {
+    expect(status({ contextRatio: 0 })).toContain("Context 0%");
   });
 
   it("小さい料金も有効数字2桁程度で出す", () => {
@@ -66,7 +66,7 @@ describe("renderStatus", () => {
   it("モードだけ差し色にする", () => {
     const theme = createTheme({ env: { COLORTERM: "truecolor" }, isTTY: true });
     const line = status({ theme });
-    expect(line).toContain("\u001B[38;2;91;141;184m実行");
+    expect(line).toContain("\u001B[38;2;91;141;184mAgent");
     expect(line).toContain("deepseek-v4.1-flash（high）");
   });
 

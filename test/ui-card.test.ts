@@ -8,7 +8,7 @@ const plain = createTheme({ env: {}, isTTY: false });
 describe("renderCard", () => {
   it("幅60以上では角丸の枠で囲む", () => {
     const lines = renderCard({
-      title: "編集の案  src/app.ts  1/2",
+      title: "Diff  src/app.ts  1/2",
       body: [
         "- if (err) return;",
         '+ if (err) throw new AppError("読み込みに失敗しました", {',
@@ -19,7 +19,7 @@ describe("renderCard", () => {
       width: 60,
       theme: plain,
     });
-    expect(lines[0]?.startsWith("╭─ 編集の案")).toBe(true);
+    expect(lines[0]?.startsWith("╭─ Diff")).toBe(true);
     expect(lines[0]?.endsWith("╮")).toBe(true);
     expect(lines.at(-1)?.startsWith("╰─ Enter 採用")).toBe(true);
     expect(lines.at(-1)?.endsWith("╯")).toBe(true);
@@ -27,7 +27,7 @@ describe("renderCard", () => {
 
   it("全行の右端が同じ幅になる", () => {
     const lines = renderCard({
-      title: "編集の案  src/app.ts  1/2",
+      title: "Diff  src/app.ts  1/2",
       body: [
         "- if (err) return;",
         '+ if (err) throw new AppError("読み込みに失敗しました", {',

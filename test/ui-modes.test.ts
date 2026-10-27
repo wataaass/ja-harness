@@ -16,12 +16,12 @@ describe("modes", () => {
   });
 
   it("表示名と直接の指定を読む", () => {
-    expect(modeLabel("run")).toBe("実行");
-    expect(modeLabel("plan")).toBe("計画");
-    expect(modeLabel("ask")).toBe("質問");
-    expect(parseMode("計画")).toBe("plan");
+    expect(modeLabel("run")).toBe("Agent");
+    expect(modeLabel("plan")).toBe("Plan");
+    expect(modeLabel("ask")).toBe("Ask");
+    expect(parseMode("Plan")).toBe("plan");
     expect(parseMode("ask")).toBe("ask");
-    expect(parseMode("実行")).toBe("run");
+    expect(parseMode("Agent")).toBe("run");
     expect(parseMode("その他")).toBeUndefined();
   });
 
@@ -31,7 +31,7 @@ describe("modes", () => {
     expect(modeNotice("ask")).toContain("Ask mode");
   });
 
-  it("計画と質問では編集・作成・シェルを断る", () => {
+  it("Plan と Ask では編集・作成・シェルを断る", () => {
     expect(modeAllowsTool("run", "edit")).toBe(true);
     expect(modeAllowsTool("plan", "edit")).toBe(false);
     expect(modeAllowsTool("plan", "write")).toBe(false);

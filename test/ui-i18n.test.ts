@@ -99,7 +99,7 @@ describe("getMessages", () => {
   it("ja を返し、知らない言語も ja にする", () => {
     expect(getMessages()).toBe(getMessages("ja"));
     expect(getMessages("xx")).toBe(getMessages("ja"));
-    expect(getMessages("xx").modes.run).toBe("実行");
+    expect(getMessages("xx").modes.run).toBe("Agent");
   });
 });
 

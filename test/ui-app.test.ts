@@ -569,7 +569,7 @@ describe("runApp の追加機能", () => {
     const { input, output, result } = start({ complete });
 
     input.send("\x1b[Z");
-    await waitFor(output, "計画");
+    await waitFor(output, "Plan");
     input.send("hi\r");
     await waitFor(output, "了解");
 
@@ -598,7 +598,7 @@ describe("runApp の追加機能", () => {
     });
 
     input.send("\x1b[Z");
-    await waitFor(output, "計画");
+    await waitFor(output, "Plan");
     input.send("go\r");
     await waitFor(output, "done");
 
@@ -621,9 +621,9 @@ describe("runApp の追加機能", () => {
       const { input, output, result } = start({ complete, cwd });
 
       input.send("\x1b[Z");
-      await waitFor(output, "計画");
+      await waitFor(output, "Plan");
       input.send("plan please\r");
-      await waitFor(output, "計画  .ja-harness/plans/");
+      await waitFor(output, "Plan  .ja-harness/plans/");
 
       const dir = join(cwd, ".ja-harness", "plans");
       const files = readdirSync(dir);
@@ -651,7 +651,7 @@ describe("runApp の追加機能", () => {
       const { input, output, result } = start({ complete, cwd });
 
       input.send("\x1b[Z");
-      await waitFor(output, "計画");
+      await waitFor(output, "Plan");
       input.send("plan please\r");
       await waitFor(output, "承認して実行");
       input.send("e");
@@ -679,7 +679,7 @@ describe("runApp の追加機能", () => {
       const { input, output, result } = start({ complete, cwd });
 
       input.send("\x1b[Z");
-      await waitFor(output, "計画");
+      await waitFor(output, "Plan");
       input.send("plan please\r");
       await waitFor(output, "却下");
       input.send("\x1b");
@@ -899,7 +899,7 @@ describe("runApp の追加機能", () => {
     input.send("one\r");
     await waitFor(output, "first");
     input.send("/model\r");
-    await waitFor(output, "推論の量");
+    await waitFor(output, "Effort");
     input.send("\x1b[B");
     input.send("\x1b[D");
     input.send("\r");
@@ -934,14 +934,14 @@ describe("runApp の追加機能", () => {
 
     input.send("one\r");
     await waitFor(output, "first");
-    await waitFor(output, "文脈が 90k を超えました");
+    await waitFor(output, "Context が 90k を超えました");
     await waitFor(output, "100k を超えると、次から単価が5倍になります");
     input.send("two\r");
     await waitFor(output, "second");
     expect(await close(input, output, result)).toBe(0);
 
     const text = stripAnsi(output.text);
-    expect(text.match(/文脈が 90k を超えました/g)).toHaveLength(1);
+    expect(text.match(/Context が 90k を超えました/g)).toHaveLength(1);
   });
 
   it("料金の段がないモデルでは知らせない", async () => {
@@ -951,7 +951,7 @@ describe("runApp の追加機能", () => {
     input.send("one\r");
     await waitFor(output, "first");
     expect(await close(input, output, result)).toBe(0);
-    expect(stripAnsi(output.text)).not.toContain("文脈が 90k を超えました");
+    expect(stripAnsi(output.text)).not.toContain("Context が 90k を超えました");
   });
 
   it("/details で道具の結果の先頭を出す", async () => {
@@ -1080,9 +1080,9 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
       const { input, output, result } = start({ complete, cwd });
 
       input.send("go\r");
-      await waitFor(output, "編集の案  a.txt  1/2");
+      await waitFor(output, "Diff  a.txt  1/2");
       input.send("\r");
-      await waitFor(output, "編集の案  a.txt  2/2");
+      await waitFor(output, "Diff  a.txt  2/2");
       input.send("\x1b");
       await waitFor(output, "done");
 
@@ -1104,7 +1104,7 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
     });
 
     input.send("go\r");
-    await waitFor(output, "編集の案  a.ts  1/2");
+    await waitFor(output, "Diff  a.ts  1/2");
     input.send("a");
     await waitFor(output, "done");
 
@@ -1121,9 +1121,9 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
     });
 
     input.send("go\r");
-    await waitFor(output, "編集の案  a.ts  1/2");
+    await waitFor(output, "Diff  a.ts  1/2");
     input.send("\r");
-    await waitFor(output, "編集の案  a.ts  2/2");
+    await waitFor(output, "Diff  a.ts  2/2");
     input.send("e");
     await waitFor(output, "却下の理由");
     input.send("まだ早い\r");
@@ -1139,7 +1139,7 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
     ]);
   });
 
-  it("Ctrl+R で見直し、←→ でファイルを切り替え、i の指示を送る", async () => {
+  it("Ctrl+R で Review、←→ でファイルを切り替え、i の指示を送る", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "ja-harness-review-"));
     try {
       writeFileSync(join(cwd, "a.txt"), "a\n");
@@ -1165,9 +1165,9 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
       await waitFor(output, "今回");
 
       input.send("\x12");
-      await waitFor(output, "見直し  a.txt  1/2");
+      await waitFor(output, "Review  a.txt  1/2");
       input.send("\x1b[C");
-      await waitFor(output, "見直し  b.txt  2/2");
+      await waitFor(output, "Review  b.txt  2/2");
       input.send("i");
       await waitFor(output, "追加の指示");
       input.send("もっと\r");
@@ -1443,7 +1443,7 @@ describe("runApp のセッション", () => {
     }
   });
 
-  it("/context のカードに文脈と料金の内訳を出す", async () => {
+  it("/context のカードに Context と料金の内訳を出す", async () => {
     const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
     try {
@@ -1454,10 +1454,10 @@ describe("runApp のセッション", () => {
       await waitFor(output, "ok");
       await waitFor(output, "今回");
       input.send("/context\r");
-      await waitFor(output, "文脈の内訳");
-      await waitFor(output, "指示（system）");
-      await waitFor(output, "道具の定義");
-      await waitFor(output, "道具の結果");
+      await waitFor(output, "Context");
+      await waitFor(output, "System prompt");
+      await waitFor(output, "Tools");
+      await waitFor(output, "Tool results");
       await waitFor(output, "切り詰め・要約で減らした分");
       await waitFor(output, "キャッシュに当たった入力");
       input.send("\r");
@@ -1600,7 +1600,7 @@ describe("runApp の設定ファイル", () => {
         createTools: () => [editTool],
       });
 
-      await waitFor(output, "計画");
+      await waitFor(output, "Plan");
       input.send("go\r");
       await waitFor(output, "done");
 

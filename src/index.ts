@@ -182,7 +182,7 @@ async function main(): Promise<number> {
         } else if (event.type === "context") {
           const label = event.action === "prune" ? "切り詰め" : "要約";
           process.stderr.write(
-            `（文脈: ${label} ${event.savedTokens} トークン減）\n`,
+            `（Context: ${label} ${event.savedTokens} トークン減）\n`,
           );
         }
       },
