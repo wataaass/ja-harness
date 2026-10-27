@@ -76,20 +76,6 @@ export const ja = {
       `${date}  ${text}  ${cost} · ${turns} turns`,
   },
 
-  commands: {
-    help: "Keys and commands",
-    mode: "Choose mode",
-    permission: "Choose permission",
-    model: "Choose model and effort",
-    details: "Toggle details",
-    undo: "Undo changes",
-    resume: "Resume a session",
-    clear: "Clear the conversation",
-    compact: "Summarize to shorten",
-    summarize: "Same as /compact",
-    context: "Show context",
-  },
-
   helpLines: (enter?: "send" | "newline"): string[] => [
     " Keys",
     enter === "newline"
@@ -170,7 +156,6 @@ export const ja = {
       decideFooter: "Enter select  Esc cancel",
       sessionFooter: "↑↓ move  Enter select  Esc cancel",
       effortLabel: "Effort",
-      priceNote: "$ per 1M tokens. in=input cache=cache read out=output",
       modelTitle: "Model",
       modelFooter: "↑↓ model  ←→ effort  Enter select  Esc cancel",
     },

@@ -846,6 +846,8 @@ describe("runApp の追加機能", () => {
     input.send("/mo");
     await waitFor(output, "/mode");
     await waitFor(output, "/model");
+    expect(stripAnsi(output.text)).not.toContain("Choose mode");
+    expect(stripAnsi(output.text)).not.toContain("Choose model and effort");
     input.send("\t");
     await waitFor(output, "› /mode");
     input.send("\r");
@@ -1505,7 +1507,7 @@ describe("runApp のセッション", () => {
     }
   });
 
-  it("/model の行を短くし、単価の説明を出す", async () => {
+  it("/model の行を短くし、単価の説明を出さない", async () => {
     const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
     try {
@@ -1513,8 +1515,8 @@ describe("runApp のセッション", () => {
       const { input, output, result } = start({ complete, home, cwd });
 
       input.send("/model\r");
-      await waitFor(output, "$ per 1M tokens");
       await waitFor(output, "in 0.15  cache 0.003  out 0.6");
+      expect(stripAnsi(output.text)).not.toContain("$ per 1M tokens");
       input.send("\x1b");
       await new Promise((resolve) => setTimeout(resolve, 20));
 

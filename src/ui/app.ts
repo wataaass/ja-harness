@@ -152,7 +152,7 @@ type Warning = { text: string; onYes: () => void };
 
 type QueuedInput = { text: string; notice?: string };
 
-type Command = { name: string; description: string };
+type Command = { name: string };
 
 const DEFAULT_TIMING = {
   escape: 30,
@@ -160,19 +160,19 @@ const DEFAULT_TIMING = {
   exit: 2000,
 };
 
-function commands(messages: Messages): Command[] {
+function commands(): Command[] {
   return [
-    { name: "/help", description: messages.commands.help },
-    { name: "/mode", description: messages.commands.mode },
-    { name: "/permission", description: messages.commands.permission },
-    { name: "/model", description: messages.commands.model },
-    { name: "/details", description: messages.commands.details },
-    { name: "/undo", description: messages.commands.undo },
-    { name: "/resume", description: messages.commands.resume },
-    { name: "/clear", description: messages.commands.clear },
-    { name: "/compact", description: messages.commands.compact },
-    { name: "/summarize", description: messages.commands.summarize },
-    { name: "/context", description: messages.commands.context },
+    { name: "/help" },
+    { name: "/mode" },
+    { name: "/permission" },
+    { name: "/model" },
+    { name: "/details" },
+    { name: "/undo" },
+    { name: "/resume" },
+    { name: "/clear" },
+    { name: "/compact" },
+    { name: "/summarize" },
+    { name: "/context" },
   ];
 }
 
@@ -255,7 +255,7 @@ export async function runApp(o: AppOptions): Promise<number> {
     ...(settings.ui?.theme === "light" ? { dark: false } : {}),
   });
   const messages = getMessages(o.lang ?? settings.language?.ui);
-  const commandList = commands(messages);
+  const commandList = commands();
   const history = createHistory();
   const estimate = createEstimator();
   const saver = createFileSaver(join(o.cwd, ".ja-harness", "out"));
@@ -573,7 +573,6 @@ export async function runApp(o: AppOptions): Promise<number> {
     });
     const body: string[] = [
       ` ${messages.app.picker.effortLabel}  ${efforts.join("  ")}`,
-      ` ${messages.app.picker.priceNote}`,
     ];
     for (let index = 0; index < MODELS.length; index += 1) {
       const item = MODELS[index];
@@ -815,7 +814,7 @@ export async function runApp(o: AppOptions): Promise<number> {
           if (item === undefined) {
             continue;
           }
-          const text = ` ${item.name}  ${item.description}`;
+          const text = ` ${item.name}`;
           lines.push(
             truncate(
               index === slashIndex ? theme.accent(` ›${text}`) : `  ${text}`,
