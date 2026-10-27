@@ -742,8 +742,8 @@ describe("runApp の追加機能", () => {
       ],
     });
 
-    input.send("/permission 編集は自動\r");
-    await waitFor(output, "編集は自動");
+    input.send("/permission Auto-edit\r");
+    await waitFor(output, "Auto-edit");
     input.send("go\r");
     await waitFor(output, "Enter 許可");
     input.send("\r");
@@ -783,8 +783,8 @@ describe("runApp の追加機能", () => {
       ],
     });
 
-    input.send("/permission 編集は自動\r");
-    await waitFor(output, "編集は自動");
+    input.send("/permission Auto-edit\r");
+    await waitFor(output, "Auto-edit");
     input.send("go\r");
     await waitFor(output, "Enter 許可");
     input.send("\r");
@@ -827,10 +827,10 @@ describe("runApp の追加機能", () => {
       ],
     });
 
-    input.send("/permission すべて自動\r");
+    input.send("/permission Auto\r");
     await waitFor(output, "シェルのコマンドも確認せずに実行します");
     input.send("\r");
-    await waitFor(output, "すべて自動");
+    await waitFor(output, "Auto");
     input.send("go\r");
     await waitFor(output, "done");
 
@@ -1175,8 +1175,8 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
       ]);
       const { input, output, result } = start({ complete, cwd });
 
-      input.send("/permission 編集は自動\r");
-      await waitFor(output, "編集は自動");
+      input.send("/permission Auto-edit\r");
+      await waitFor(output, "Auto-edit");
       input.send("go\r");
       await waitFor(output, "done");
       await waitFor(output, "今回");
@@ -1214,8 +1214,8 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
       ]);
       const { input, output, result } = start({ complete, cwd });
 
-      input.send("/permission 編集は自動\r");
-      await waitFor(output, "編集は自動");
+      input.send("/permission Auto-edit\r");
+      await waitFor(output, "Auto-edit");
       input.send("go\r");
       await waitFor(output, "done");
       await waitFor(output, "今回");
@@ -1576,7 +1576,7 @@ describe("runApp の設定ファイル", () => {
         ],
       });
 
-      await waitFor(output, "編集は自動");
+      await waitFor(output, "Auto-edit");
       input.send("go\r");
       await waitFor(output, "Enter 許可");
       input.send("\r");

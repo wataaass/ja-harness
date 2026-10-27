@@ -17,9 +17,9 @@ export const ja = {
   },
 
   permissions: {
-    ask: "確認する",
-    "auto-edit": "編集は自動",
-    "auto-all": "すべて自動",
+    ask: "Confirm",
+    "auto-edit": "Auto-edit",
+    "auto-all": "Auto",
   },
 
   settings: {

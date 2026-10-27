@@ -8,7 +8,7 @@ const plain = createTheme({ env: {}, isTTY: false });
 function status(overrides: Record<string, unknown> = {}) {
   return renderStatus({
     mode: "Agent",
-    permission: "確認する",
+    permission: "Confirm",
     model: "deepseek-v4.1-flash",
     effort: "high",
     contextRatio: 0.12,
@@ -23,7 +23,7 @@ function status(overrides: Record<string, unknown> = {}) {
 describe("renderStatus", () => {
   it("モード・権限・モデル・Context・料金・メーターを並べる", () => {
     expect(status()).toBe(
-      " Agent  確認する  deepseek-v4.1-flash（high）  Context 12%  0.003ドル ▰▰▰▰▱ 87%",
+      " Agent  Confirm  deepseek-v4.1-flash（high）  Context 12%  0.003ドル ▰▰▰▰▱ 87%",
     );
   });
 
@@ -34,20 +34,20 @@ describe("renderStatus", () => {
   });
 
   it("待ちがあれば件数を足す", () => {
-    expect(status({ queued: 1 })).toContain("確認する  待ち 1件  deepseek");
+    expect(status({ queued: 1 })).toContain("Confirm  待ち 1件  deepseek");
   });
 
   it("幅が足りなければモデル名を先に省く", () => {
     const line = status({ width: 55 });
     expect(stripAnsi(line)).not.toContain("deepseek");
-    expect(stripAnsi(line)).toContain("確認する");
+    expect(stripAnsi(line)).toContain("Confirm");
     expect(stringWidth(line)).toBeLessThanOrEqual(55);
   });
 
   it("それでも足りなければ権限も省く", () => {
     const line = status({ width: 30 });
     expect(stripAnsi(line)).not.toContain("deepseek");
-    expect(stripAnsi(line)).not.toContain("確認する");
+    expect(stripAnsi(line)).not.toContain("Confirm");
     expect(stringWidth(line)).toBeLessThanOrEqual(30);
   });
 

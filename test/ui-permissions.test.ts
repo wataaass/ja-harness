@@ -7,12 +7,12 @@ import {
 
 describe("permissions", () => {
   it("表示名と直接の指定を読む", () => {
-    expect(permissionLabel("ask")).toBe("確認する");
-    expect(permissionLabel("auto-edit")).toBe("編集は自動");
-    expect(permissionLabel("auto-all")).toBe("すべて自動");
-    expect(parsePermission("編集は自動")).toBe("auto-edit");
-    expect(parsePermission("すべて自動")).toBe("auto-all");
-    expect(parsePermission("確認する")).toBe("ask");
+    expect(permissionLabel("ask")).toBe("Confirm");
+    expect(permissionLabel("auto-edit")).toBe("Auto-edit");
+    expect(permissionLabel("auto-all")).toBe("Auto");
+    expect(parsePermission("Auto-edit")).toBe("auto-edit");
+    expect(parsePermission("Auto")).toBe("auto-all");
+    expect(parsePermission("Confirm")).toBe("ask");
     expect(parsePermission("unknown")).toBeUndefined();
   });
 
