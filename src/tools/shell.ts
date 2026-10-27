@@ -48,6 +48,24 @@ type ShellResult = {
   timedOut: boolean;
 };
 
+export function shellInvocation(
+  command: string,
+  platform: string = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "win32") {
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ${command}`,
+      ],
+    };
+  }
+  return { command, args: [] };
+}
+
 function abortReason(signal?: AbortSignal): Error {
   const reason: unknown = signal?.reason;
   if (reason instanceof Error) {
@@ -64,6 +82,7 @@ function run(
   cwd: string,
   timeoutSeconds: number,
   signal?: AbortSignal,
+  platform: string = process.platform,
 ): Promise<ShellResult> {
   return new Promise<ShellResult>((resolve, reject) => {
     if (signal?.aborted) {
@@ -71,10 +90,12 @@ function run(
       return;
     }
 
-    const child = spawn(command, {
+    const invocation = shellInvocation(command, platform);
+    const child = spawn(invocation.command, invocation.args, {
       cwd,
-      shell: true,
-      detached: true,
+      ...(platform === "win32"
+        ? { windowsHide: true }
+        : { shell: true, detached: true }),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -92,6 +113,17 @@ function run(
 
     const killGroup = () => {
       if (child.pid === undefined) {
+        return;
+      }
+      if (platform === "win32") {
+        const killer = spawn(
+          "taskkill",
+          ["/pid", String(child.pid), "/T", "/F"],
+          { windowsHide: true },
+        );
+        killer.on("error", () => {
+          // already gone
+        });
         return;
       }
       try {
@@ -166,6 +198,11 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
           type: "string",
           description: "Shell command to run.",
         },
+        description: {
+          type: "string",
+          description:
+            "What this command does, in one short phrase in Japanese. Shown to the user when asking permission.",
+        },
         timeoutSeconds: {
           type: "integer",
           minimum: 1,
@@ -173,7 +210,7 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
           description: "Timeout in seconds (default 120).",
         },
       },
-      required: ["command"],
+      required: ["command", "description"],
     },
     maxResultTokens: 6000,
     async execute(args: unknown, signal?: AbortSignal): Promise<string> {
@@ -195,18 +232,18 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
         );
       }
 
-      const firstLine = args.command.split(/\r?\n/)[0] ?? "";
-      const shown = firstLine.slice(0, 80);
-      const isSingleLine = !/[\r\n]/.test(args.command);
-      const detail =
-        isSingleLine && args.command.length <= 80 ? "" : args.command;
+      const description =
+        typeof args.description === "string"
+          ? args.description.trim().slice(0, 80)
+          : "";
+      const title = description === "" ? "Shell" : `Shell · ${description}`;
 
       signal?.throwIfAborted();
       const decision = toDecision(
         await confirm({
           tool: "shell",
-          title: `Run: ${shown}`,
-          detail,
+          title,
+          detail: args.command,
         }),
       );
       if (!decision.allow) {

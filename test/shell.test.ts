@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Confirm } from "../src/tools/confirm.js";
-import { cleanOutput, createShellTool } from "../src/tools/shell.js";
+import {
+  cleanOutput,
+  createShellTool,
+  shellInvocation,
+} from "../src/tools/shell.js";
 
 function setup(): string {
   return mkdtempSync(join(tmpdir(), "ja-harness-shell-"));
@@ -76,40 +80,92 @@ describe("shell", () => {
 
     const result = await createShellTool(cwd, confirm).execute({
       command: "echo hi",
+      description: "あいさつ",
     });
 
     expect(result).toBe("hi\n[exit code 0]");
     expect(confirm).toHaveBeenCalledWith({
       tool: "shell",
-      title: "Run: echo hi",
-      detail: "",
+      title: "Shell · あいさつ",
+      detail: "echo hi",
     });
   });
 
-  it("80文字を超える1行は detail に全文を出す", async () => {
+  it("description がなければ Shell とだけ出す", async () => {
+    const cwd = setup();
+    const confirm = vi.fn<Confirm>(async () => true);
+
+    await createShellTool(cwd, confirm).execute({ command: "echo hi" });
+
+    expect(confirm).toHaveBeenCalledWith({
+      tool: "shell",
+      title: "Shell",
+      detail: "echo hi",
+    });
+  });
+
+  it("description が文字列でなくても動く", async () => {
+    const cwd = setup();
+    const confirm = vi.fn<Confirm>(async () => true);
+
+    await createShellTool(cwd, confirm).execute({
+      command: "echo hi",
+      description: 42,
+    });
+
+    expect(confirm).toHaveBeenCalledWith({
+      tool: "shell",
+      title: "Shell",
+      detail: "echo hi",
+    });
+  });
+
+  it("description の前後の空白を除き、80文字で切る", async () => {
+    const cwd = setup();
+    const confirm = vi.fn<Confirm>(async () => true);
+
+    await createShellTool(cwd, confirm).execute({
+      command: "echo hi",
+      description: `  ${"あ".repeat(81)}  `,
+    });
+
+    expect(confirm).toHaveBeenCalledWith({
+      tool: "shell",
+      title: `Shell · ${"あ".repeat(80)}`,
+      detail: "echo hi",
+    });
+  });
+
+  it("1行でも detail に全文を出す", async () => {
     const cwd = setup();
     const confirm = vi.fn<Confirm>(async () => true);
     const command = `echo ${"a".repeat(81)}`;
 
-    await createShellTool(cwd, confirm).execute({ command });
+    await createShellTool(cwd, confirm).execute({
+      command,
+      description: "長い行",
+    });
 
     expect(confirm).toHaveBeenCalledWith({
       tool: "shell",
-      title: `Run: ${command.slice(0, 80)}`,
+      title: "Shell · 長い行",
       detail: command,
     });
   });
 
-  it("複数行なら detail に全文を出す", async () => {
+  it("複数行でも detail に全文を出す", async () => {
     const cwd = setup();
     const confirm = vi.fn<Confirm>(async () => true);
     const command = "echo a\necho b";
 
-    await createShellTool(cwd, confirm).execute({ command });
+    await createShellTool(cwd, confirm).execute({
+      command,
+      description: "2行",
+    });
 
     expect(confirm).toHaveBeenCalledWith({
       tool: "shell",
-      title: "Run: echo a",
+      title: "Shell · 2行",
       detail: command,
     });
   });
@@ -243,5 +299,26 @@ describe("shell の却下の理由", () => {
       "The user declined this command. Ask what they want instead.\nReason from the user: 本番では実行しないで",
     );
     expect(existsSync(join(cwd, "side.txt"))).toBe(false);
+  });
+});
+
+describe("shellInvocation", () => {
+  it("win32 では PowerShell で動かす", () => {
+    expect(shellInvocation("dir", "win32")).toEqual({
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8; dir",
+      ],
+    });
+  });
+
+  it("linux ではコマンドをそのまま使う", () => {
+    expect(shellInvocation("ls -la", "linux")).toEqual({
+      command: "ls -la",
+      args: [],
+    });
   });
 });
