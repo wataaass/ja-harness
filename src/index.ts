@@ -37,6 +37,7 @@ const HELP = `使い方: ja-harness [--resume <id> | --continue]
   ~/.ja-harness/config.json と ./.ja-harness/config.json（作業フォルダのほうが優先）
   例: {"model": "deepseek-v4-pro", "effort": "high", "permission": "auto-edit"}
       {"mode": "plan", "ui": {"theme": "light", "details": "verbose"}}
+      {"ui": {"enter": "newline"}}
       {"language": {"ui": "ja"}}
 
 環境変数:

@@ -89,9 +89,11 @@ export const ja = {
     context: "Context を見る",
   },
 
-  helpLines: [
+  helpLines: (enter?: "send" | "newline"): string[] => [
     " キー",
-    "  Enter 送る  Shift+Enter 改行（使えない端末では Ctrl+J）  ↑↓ 前の入力",
+    enter === "newline"
+      ? "  Enter 改行（空の行で Enter 送る）  Shift+Enter・Ctrl+J 送る  ↑↓ 前の入力"
+      : "  Enter 送る  Shift+Enter 改行（使えない端末では Ctrl+J）  ↑↓ 前の入力",
     "  Shift+Tab モード  Ctrl+O 途中経過  Ctrl+R 変更の Review  Ctrl+C 入力を消す  Ctrl+D 2回で終了",
     "  Esc 止める・閉じる  Tab 候補を入れる",
     " コマンド",

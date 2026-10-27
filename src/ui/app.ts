@@ -1690,7 +1690,7 @@ export async function runApp(o: AppOptions): Promise<number> {
 
     switch (command) {
       case "/help":
-        emit(messages.helpLines);
+        emit(messages.helpLines(settings.ui?.enter));
         return true;
       case "/details":
         toggleDetails();
@@ -1876,7 +1876,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     }
 
     const before = editor.text;
-    const result = applyKey(editor, key);
+    const result = applyKey(editor, key, {
+      enter: slash.length > 0 ? "send" : (settings.ui?.enter ?? "send"),
+    });
     const action = result.action;
     if (action === "submit") {
       if (slash.length > 0) {
@@ -1889,7 +1891,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         render();
         return;
       }
-      const text = editor.text;
+      const text = result.state.text;
       editor = { text: "", cursor: 0 };
       slashIndex = 0;
       submit(text);

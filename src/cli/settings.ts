@@ -7,13 +7,18 @@ export type SettingsPermission = "ask" | "auto-edit" | "auto-all";
 export type SettingsMode = "run" | "plan" | "ask";
 export type SettingsTheme = "dark" | "light" | "auto";
 export type SettingsDetails = "brief" | "verbose";
+export type SettingsEnter = "send" | "newline";
 
 export type Settings = {
   model?: string;
   effort?: SettingsEffort;
   permission?: SettingsPermission;
   mode?: SettingsMode;
-  ui?: { theme?: SettingsTheme; details?: SettingsDetails };
+  ui?: {
+    theme?: SettingsTheme;
+    details?: SettingsDetails;
+    enter?: SettingsEnter;
+  };
   language?: { ui?: string };
 };
 
@@ -28,6 +33,7 @@ const PERMISSIONS: SettingsPermission[] = ["ask", "auto-edit", "auto-all"];
 const MODES: SettingsMode[] = ["run", "plan", "ask"];
 const THEMES: SettingsTheme[] = ["dark", "light", "auto"];
 const DETAILS: SettingsDetails[] = ["brief", "verbose"];
+const ENTERS: SettingsEnter[] = ["send", "newline"];
 const TOP_KEYS = new Set([
   "model",
   "effort",
@@ -122,7 +128,11 @@ function readFile(
           warnings.push(messages.settings.notObject(path, key));
           break;
         }
-        const ui: { theme?: SettingsTheme; details?: SettingsDetails } = {};
+        const ui: {
+          theme?: SettingsTheme;
+          details?: SettingsDetails;
+          enter?: SettingsEnter;
+        } = {};
         for (const [name, item] of Object.entries(value)) {
           if (name === "theme") {
             if (oneOf(THEMES, item)) {
@@ -138,6 +148,14 @@ function readFile(
             } else {
               warnings.push(
                 messages.settings.invalid(path, "ui.details", allowed(DETAILS)),
+              );
+            }
+          } else if (name === "enter") {
+            if (oneOf(ENTERS, item)) {
+              ui.enter = item;
+            } else {
+              warnings.push(
+                messages.settings.invalid(path, "ui.enter", allowed(ENTERS)),
               );
             }
           } else {

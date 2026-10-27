@@ -561,6 +561,23 @@ describe("runApp", () => {
     expect(await close(input, output, result)).toBe(0);
     expect(calls[0]?.at(-1)).toEqual({ role: "user", content: "a\nb" });
   });
+
+  it("設定の ui.enter が newline なら Enter 2回で送り、末尾の改行を送らない", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    try {
+      writeSettingsConfig(home, { ui: { enter: "newline" } });
+      const { complete, calls } = sequence([answer("了解")]);
+      const { input, output, result } = start({ complete, home });
+
+      input.send("あ\r\r");
+      await waitFor(output, "了解");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(calls[0]?.at(-1)).toEqual({ role: "user", content: "あ" });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("runApp の追加機能", () => {

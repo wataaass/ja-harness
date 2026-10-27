@@ -23,6 +23,12 @@ export type ApplyResult = {
   action?: EditorAction;
 };
 
+export type EnterMode = "send" | "newline";
+
+export type ApplyOptions = {
+  enter?: EnterMode;
+};
+
 function clamp(value: number, min: number, max: number): number {
   if (value < min) {
     return min;
@@ -121,9 +127,14 @@ function moveDown(state: EditorState): ApplyResult {
   return { state: withCursor(state, nextStart + offset) };
 }
 
-export function applyKey(state: EditorState, key: Key): ApplyResult {
+export function applyKey(
+  state: EditorState,
+  key: Key,
+  options?: ApplyOptions,
+): ApplyResult {
   const chars = [...state.text];
   const cursor = clamp(state.cursor, 0, chars.length);
+  const enter = options?.enter ?? "send";
 
   switch (key.type) {
     case "char":
@@ -133,12 +144,32 @@ export function applyKey(state: EditorState, key: Key): ApplyResult {
         state: insertText(state, key.text.replace(/\r\n?/g, "\n")),
       };
     case "newline":
+      if (enter === "newline") {
+        if (state.text.trim() === "") {
+          return { state };
+        }
+        return { state, action: "submit" };
+      }
       return { state: insertText(state, "\n") };
     case "enter":
       if (state.text.trim() === "") {
         return { state };
       }
-      return { state, action: "submit" };
+      if (enter !== "newline") {
+        return { state, action: "submit" };
+      }
+      {
+        const start = lineStartOf(chars, cursor);
+        const end = lineEndOf(chars, cursor);
+        if (start !== end) {
+          return { state: insertText(state, "\n") };
+        }
+        const from = start > 0 ? start - 1 : end;
+        return {
+          state: removeRange(state, from, from + 1),
+          action: "submit",
+        };
+      }
     case "backspace":
       if (cursor === 0) {
         return { state };

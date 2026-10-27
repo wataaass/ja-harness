@@ -32,6 +32,42 @@ describe("applyKey", () => {
       state: { text: "こんにちは", cursor: 5 },
       action: "submit",
     });
+    expect(
+      applyKey(state("こんにちは", 5), { type: "enter" }, { enter: "send" }),
+    ).toEqual({
+      state: { text: "こんにちは", cursor: 5 },
+      action: "submit",
+    });
+  });
+
+  it("enter が newline なら Enter で改行を入れる", () => {
+    expect(
+      applyKey(state("あ"), { type: "enter" }, { enter: "newline" }),
+    ).toEqual({ state: { text: "あ\n", cursor: 2 } });
+  });
+
+  it("enter が newline なら空の行の Enter で送信し、空の行を消す", () => {
+    expect(
+      applyKey(state("あいう\n", 4), { type: "enter" }, { enter: "newline" }),
+    ).toEqual({
+      state: { text: "あいう", cursor: 3 },
+      action: "submit",
+    });
+    expect(
+      applyKey(state("   \n", 4), { type: "enter" }, { enter: "newline" }),
+    ).toEqual({ state: { text: "   \n", cursor: 4 } });
+  });
+
+  it("enter が newline なら newline のキーで送信する", () => {
+    expect(
+      applyKey(state("あ"), { type: "newline" }, { enter: "newline" }),
+    ).toEqual({
+      state: { text: "あ", cursor: 1 },
+      action: "submit",
+    });
+    expect(
+      applyKey(state("  ", 2), { type: "newline" }, { enter: "newline" }),
+    ).toEqual({ state: { text: "  ", cursor: 2 } });
   });
 
   it("backspace と delete で文字を消す", () => {

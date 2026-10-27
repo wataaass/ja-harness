@@ -28,6 +28,8 @@ API は OpenAI 互換。既定は OpenCode Go（`JA_HARNESS_BASE_URL`・`JA_HARN
 | ↑ / ↓ | 前の入力をたどる（作業中は待ち行列の文を呼び戻す） |
 | Ctrl+D 2回 | 終了 |
 
+`.ja-harness/config.json` に `{"ui": {"enter": "newline"}}` と書くと、Enter で改行・空の行で Enter で送信になる。
+
 主なコマンド: `/mode`・`/permission`・`/model`・`/undo`・`/resume`・`/clear`・`/compact`・`/context`・`/details`・`/help`。`@` でファイルを指定できる。
 
 品質と料金の測定は `node dist/index.js bench`（`bench/RESULTS.md`）。

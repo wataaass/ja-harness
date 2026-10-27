@@ -64,6 +64,27 @@ describe("loadSettings", () => {
     });
   });
 
+  it("ui.enter を読む", () => {
+    const home = makeDir("ja-settings-home-");
+    writeConfig(home, JSON.stringify({ ui: { enter: "newline" } }));
+
+    expect(load(makeDir("ja-settings-cwd-"), home)).toEqual({
+      settings: { ui: { enter: "newline" } },
+      warnings: [],
+    });
+  });
+
+  it("ui.enter の不正な値は使わずに警告を出す", () => {
+    const home = makeDir("ja-settings-home-");
+    const path = writeConfig(home, JSON.stringify({ ui: { enter: "Enter" } }));
+
+    const result = load(makeDir("ja-settings-cwd-"), home);
+    expect(result.settings).toEqual({});
+    expect(result.warnings).toContain(
+      `設定ファイルの ${path} の ui.enter が正しくありません（send・newline のどれか）`,
+    );
+  });
+
   it("両方にあれば作業フォルダのほうが勝ち、キーごとに重ねる", () => {
     const home = makeDir("ja-settings-home-");
     const cwd = makeDir("ja-settings-cwd-");
