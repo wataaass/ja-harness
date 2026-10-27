@@ -1,0 +1,1 @@
+import "./slugify.test.js";
