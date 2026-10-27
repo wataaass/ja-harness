@@ -1,6 +1,6 @@
 # 進捗
 
-最終更新: 2026-10-27
+最終更新: 2026-10-27（夜）
 
 ## 今の状態
 - main: 最初のコミット（README・CLAUDE.md・DECISIONS.md・LICENSE）
@@ -18,14 +18,19 @@
   - 2026-10-26: DSH から4つ（要約をキャッシュに乗せる、要約の前の切り詰めとくり返しの促し、system prompt を途中で変えない、あふれたら再送）を取り入れた
   - `docs/research/reports/ハーネスのトークン削減技術.md`: 調査レポート（メモは `docs/research/research_notes/`）
 
+- 2026-10-27（夜）: 本人が Windows（Windows Terminal・PowerShell）で起動して試した。日本語入力の Enter と色は良い、Shift+Enter は効かず Ctrl+J は効いた。これを受けて PR #6 に、`ui.enter`（`newline` で Enter 改行・空の行で Enter 送信）、短い表示と道具の印の英語化、権限名の英語化（Confirm・Auto-edit・Auto）、シェルの確認に目的を出す（`description`）、Windows では PowerShell で動かす、を足した。テスト495件
+
 ## 次にやること
-1. 本人が対話の画面を実際の端末で触って確かめる（日本語入力の Enter、端末ごとの Shift+Enter、色）
-2. 道具の結果の上限（2,000・8,000）を価格から決める（キャッシュの割引が小さいモデルでは、上限を上げて読み直しを減らすほうが安い可能性）。決める前に本人に確認する
-3. bench の課題をもう少し難しくする（DeepSeek は3条件とも9割以上通る）
-4. v0.1 の残り: MCP 対応（nihongo-kit を標準で入れる）、subagent、リポジトリの地図など `docs/design/context.md` の「そのほかの削減」
-5. v0.1 のあと: PC とスマホで使える Web の画面（DECISIONS.md 2026-10-27）。設計から
+1. 本人が Windows で、PowerShell で動くシェル・確認のカードの目的・英語の表示を確かめる（Windows での実行はまだ一度も確かめていない）。起動は `cd $HOME\jh-test` のあと `node $HOME\ja-harness\dist\index.js`
+2. Windows Terminal で Shift+Enter が効かない原因を調べる（Node が Windows でキーを受け取る仕組みで Shift が落ちている可能性）
+3. 道具の結果の上限（2,000・8,000）を価格から決める（キャッシュの割引が小さいモデルでは、上限を上げて読み直しを減らすほうが安い可能性）。決める前に本人に確認する
+4. bench の課題をもう少し難しくする（DeepSeek は3条件とも9割以上通る）
+5. v0.1 の残り: MCP 対応（nihongo-kit を標準で入れる）、subagent、リポジトリの地図など `docs/design/context.md` の「そのほかの削減」
+6. v0.1 のあと: PC とスマホで使える Web の画面（DECISIONS.md 2026-10-27）。設計から
 
 ## 覚えておくこと
+- 本人の PC は Windows（ユーザー名 gensh、PowerShell）。`npm` は実行ポリシーで止まるので `npm.cmd` を使う。外部のプログラムに `~` は渡らないので `$HOME` を使う。API キーは `$env:JA_HARNESS_API_KEY` に入れる（窓ごとに消える）
+- 対話の画面を疑似端末で確かめるときは、pyte（`pip install pyte`）と、決まった tool call を返す小さな API のスタブ（ストリーミングの SSE）を使うと、カードの見た目まで確かめられる
 - 目的は料金の最適化（トークンの数ではない）。DeepSeek V4.1 Flash は cache hit が miss の約50分の1
 - 実装は DeepSeek（`opencode run -m opencode-go/deepseek-v4.1-flash --variant high`、メッセージは `-f` より前に書く）に書かせ、Claude がレビューする。無料のモデルはクラウドでは使えなかった
 - OpenCode Go の利用枠は応答の allowance で減り、Haiku は表示価格の約4倍。5時間で月の20%、1週間で50%まで
