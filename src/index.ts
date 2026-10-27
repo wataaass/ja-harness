@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { join, relative } from "node:path";
+import { loadInstructions } from "./agent/instructions.js";
 import { runTurn } from "./agent/loop.js";
 import { SYSTEM_PROMPT } from "./agent/prompt.js";
 import { createRepeatTracker } from "./agent/repeat.js";
@@ -94,7 +96,7 @@ async function main(): Promise<number> {
         output: process.stdout,
         env: process.env,
         cwd: process.cwd(),
-        home: process.env.HOME,
+        home: process.env.JA_HARNESS_HOME ?? homedir(),
         makeComplete,
         contextWindow,
         model: clientConfig.model,
@@ -116,11 +118,13 @@ async function main(): Promise<number> {
 
   const instruction = rest.join(" ");
   const { contextWindow, ...clientConfig } = readConfig(process.env);
+  const home = process.env.JA_HARNESS_HOME ?? homedir();
   const { settings } = loadSettings({
     cwd: process.cwd(),
-    home: process.env.HOME ?? process.cwd(),
+    home,
     env: process.env,
   });
+  const instructions = loadInstructions({ cwd: process.cwd(), home });
   const client = createClient({
     ...clientConfig,
     model: settings.model ?? clientConfig.model,
@@ -139,7 +143,7 @@ async function main(): Promise<number> {
   });
 
   const messages: Message[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: SYSTEM_PROMPT + instructions.text },
     { role: "user", content: instruction },
   ];
 

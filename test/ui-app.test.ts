@@ -1730,3 +1730,52 @@ describe("runApp の設定ファイル", () => {
     }
   });
 });
+
+describe("runApp の決まりのファイル", () => {
+  it("作業フォルダの AGENTS.md を読み、最初の system メッセージに入れる", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writeFileSync(join(cwd, "AGENTS.md"), "作業フォルダの決まりです\n");
+      const { complete, calls } = sequence([answer("ok")]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      await waitFor(output, "Instructions: AGENTS.md");
+      input.send("hi\r");
+      await waitFor(output, "ok");
+      expect(await close(input, output, result)).toBe(0);
+
+      expect(stripAnsi(output.text)).toContain("Instructions: AGENTS.md");
+      expect(calls[0]?.[0]?.role).toBe("system");
+      expect(calls[0]?.[0]?.content).toContain("作業フォルダの決まりです");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("決まりのファイルの行は警告色ではなく控えめな色で出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writeFileSync(join(cwd, "AGENTS.md"), "決まり\n");
+      const { complete } = sequence([]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        cwd,
+        env: { COLORTERM: "truecolor" },
+        isTTY: true,
+      });
+
+      await waitFor(output, "Instructions: AGENTS.md");
+      expect(await close(input, output, result)).toBe(0);
+      expect(output.text).toContain(
+        "\u001B[2m  Instructions: AGENTS.md\u001B[0m",
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});

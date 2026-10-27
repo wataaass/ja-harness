@@ -10,6 +10,9 @@ export const ja = {
       `Last session ${cost} · cache ${cache}%`,
   },
 
+  instructions: (labels: string) => ` Instructions: ${labels}`,
+  instructionsTruncated: " 決まりのファイルが長いので、12,000字で切りました",
+
   modes: {
     run: "Agent",
     plan: "Plan",

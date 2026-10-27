@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { loadInstructions } from "../agent/instructions.js";
 import {
   type Complete,
   type LoopEvent,
@@ -236,11 +237,14 @@ function sessionRow(session: SessionSummary, messages: Messages): string {
 export async function runApp(o: AppOptions): Promise<number> {
   const timing = { ...DEFAULT_TIMING, ...o.timing };
   const screen = createScreen(o.output);
+  const home = o.home ?? o.cwd;
   const { settings, warnings } = loadSettings({
     cwd: o.cwd,
-    home: o.home ?? o.cwd,
+    home,
     env: o.env,
   });
+  const instructions = loadInstructions({ cwd: o.cwd, home });
+  let systemContent = SYSTEM_PROMPT + instructions.text;
   const theme = createTheme({
     env: o.env,
     isTTY: o.output.isTTY ?? o.input.isTTY ?? false,
@@ -277,7 +281,7 @@ export async function runApp(o: AppOptions): Promise<number> {
     estimate,
   });
 
-  const conversation: Message[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  const conversation: Message[] = [{ role: "system", content: systemContent }];
   const queue: QueuedInput[] = [];
   const alwaysAllowed = new Set<string>();
 
@@ -394,7 +398,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       const loaded = loadSession(summary.path);
       conversation.splice(0, conversation.length, ...loaded.messages);
       if (conversation.length === 0 || conversation[0]?.role !== "system") {
-        conversation.unshift({ role: "system", content: SYSTEM_PROMPT });
+        conversation.unshift({ role: "system", content: systemContent });
       }
       sessionId = loaded.meta.id === "" ? summary.id : loaded.meta.id;
       sessionWriter = createSessionWriter(
@@ -1758,9 +1762,11 @@ export async function runApp(o: AppOptions): Promise<number> {
         return true;
       }
       case "/clear": {
+        systemContent =
+          SYSTEM_PROMPT + loadInstructions({ cwd: o.cwd, home }).text;
         conversation.splice(0, conversation.length, {
           role: "system",
-          content: SYSTEM_PROMPT,
+          content: systemContent,
         });
         sessionUsage = zeroUsage();
         turnUsage = zeroUsage();
@@ -2289,12 +2295,27 @@ export async function runApp(o: AppOptions): Promise<number> {
     }),
     ...startupLines,
   ]);
-  if (warnings.length > 0) {
+  const startupNotices = [
+    ...warnings.map((text) => ({ text, warn: true })),
+    ...(instructions.labels.length === 0
+      ? []
+      : [
+          {
+            text: messages.instructions(instructions.labels.join(", ")),
+            warn: false,
+          },
+        ]),
+    ...(instructions.truncated
+      ? [{ text: messages.instructionsTruncated, warn: true }]
+      : []),
+  ];
+  if (startupNotices.length > 0) {
     screen.print(
-      warnings.flatMap((text) =>
-        wrap(text, Math.max(1, width() - 3)).map((part, index) =>
-          theme.warn(`${index === 0 ? " " : "   "}${part}`),
-        ),
+      startupNotices.flatMap(({ text, warn }) =>
+        wrap(text, Math.max(1, width() - 3)).map((part, index) => {
+          const line = `${index === 0 ? " " : "   "}${part}`;
+          return warn ? theme.warn(line) : theme.dim(line);
+        }),
       ),
     );
   }
