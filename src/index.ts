@@ -6,6 +6,11 @@ import { loadInstructions } from "./agent/instructions.js";
 import { runTurn } from "./agent/loop.js";
 import { SYSTEM_PROMPT } from "./agent/prompt.js";
 import { createRepeatTracker } from "./agent/repeat.js";
+import {
+  builtinSkillsDir,
+  formatSkillList,
+  loadSkills,
+} from "./agent/skills.js";
 import { runBenchCli } from "./bench/cli.js";
 import { readConfig } from "./cli/config.js";
 import { createTerminalConfirm } from "./cli/confirm.js";
@@ -125,6 +130,12 @@ async function main(): Promise<number> {
     env: process.env,
   });
   const instructions = loadInstructions({ cwd: process.cwd(), home });
+  const skills = loadSkills({
+    cwd: process.cwd(),
+    home,
+    builtinDir: builtinSkillsDir(),
+    disabled: settings.skills?.disabled ?? [],
+  });
   const client = createClient({
     ...clientConfig,
     model: settings.model ?? clientConfig.model,
@@ -143,7 +154,11 @@ async function main(): Promise<number> {
   });
 
   const messages: Message[] = [
-    { role: "system", content: SYSTEM_PROMPT + instructions.text },
+    {
+      role: "system",
+      content:
+        SYSTEM_PROMPT + instructions.text + formatSkillList(skills.skills),
+    },
     { role: "user", content: instruction },
   ];
 
@@ -162,6 +177,7 @@ async function main(): Promise<number> {
           isTTY: process.stdin.isTTY === true,
           onInterrupt: () => controller.abort(),
         }),
+        { skills: skills.skills },
       ),
       messages,
       signal: controller.signal,

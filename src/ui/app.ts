@@ -20,6 +20,11 @@ import {
 import { notice } from "../agent/notice.js";
 import { SYSTEM_PROMPT } from "../agent/prompt.js";
 import { createRepeatTracker } from "../agent/repeat.js";
+import {
+  builtinSkillsDir,
+  formatSkillList,
+  loadSkills,
+} from "../agent/skills.js";
 import { loadSettings } from "../cli/settings.js";
 import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
@@ -244,7 +249,16 @@ export async function runApp(o: AppOptions): Promise<number> {
     env: o.env,
   });
   const instructions = loadInstructions({ cwd: o.cwd, home });
-  let systemContent = SYSTEM_PROMPT + instructions.text;
+  const loadSkillState = () =>
+    loadSkills({
+      cwd: o.cwd,
+      home,
+      builtinDir: builtinSkillsDir(),
+      disabled: settings.skills?.disabled ?? [],
+    });
+  let skillState = loadSkillState();
+  let systemContent =
+    SYSTEM_PROMPT + instructions.text + formatSkillList(skillState.skills);
   const theme = createTheme({
     env: o.env,
     isTTY: o.output.isTTY ?? o.input.isTTY ?? false,
@@ -437,6 +451,7 @@ export async function runApp(o: AppOptions): Promise<number> {
         createTools(o.cwd, fn, {
           plan: planFn,
           beforeWrite: (abs) => checkpoints.recordBefore(abs),
+          skills: skillState.skills,
         }))
     )(confirmWithPermission, planHandler);
   }
@@ -1762,8 +1777,11 @@ export async function runApp(o: AppOptions): Promise<number> {
         return true;
       }
       case "/clear": {
+        skillState = loadSkillState();
         systemContent =
-          SYSTEM_PROMPT + loadInstructions({ cwd: o.cwd, home }).text;
+          SYSTEM_PROMPT +
+          loadInstructions({ cwd: o.cwd, home }).text +
+          formatSkillList(skillState.skills);
         conversation.splice(0, conversation.length, {
           role: "system",
           content: systemContent,
@@ -2302,6 +2320,17 @@ export async function runApp(o: AppOptions): Promise<number> {
       : [
           {
             text: messages.instructions(instructions.labels.join(", ")),
+            warn: false,
+          },
+        ]),
+    ...(skillState.skills.length + skillState.disabled.length === 0
+      ? []
+      : [
+          {
+            text: messages.skills(
+              skillState.skills.length,
+              skillState.disabled.length,
+            ),
             warn: false,
           },
         ]),

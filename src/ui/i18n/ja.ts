@@ -12,6 +12,7 @@ export const ja = {
 
   instructions: (labels: string) => ` Instructions: ${labels}`,
   instructionsTruncated: " 決まりのファイルが長いので、12,000字で切りました",
+  skills: (on: number, off: number) => ` Skills: ${on} on, ${off} off`,
 
   modes: {
     run: "Agent",
@@ -38,6 +39,8 @@ export const ja = {
       `設定ファイルの ${path} の ${key} が文字列ではありません`,
     notObject: (path: string, key: string) =>
       `設定ファイルの ${path} の ${key} がオブジェクトではありません`,
+    notStringArray: (path: string, key: string) =>
+      `設定ファイルの ${path} の ${key} が文字列の配列ではありません`,
   },
 
   status: {

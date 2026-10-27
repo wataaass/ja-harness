@@ -183,6 +183,41 @@ describe("loadSettings", () => {
     ).toBe(true);
   });
 
+  it("skills.disabled を読む", () => {
+    const home = makeDir("ja-settings-home-");
+    writeConfig(home, JSON.stringify({ skills: { disabled: ["off"] } }));
+
+    expect(load(makeDir("ja-settings-cwd-"), home)).toEqual({
+      settings: { skills: { disabled: ["off"] } },
+      warnings: [],
+    });
+  });
+
+  it("skills.disabled が文字列の配列でなければ警告を出す", () => {
+    const home = makeDir("ja-settings-home-");
+    const path = writeConfig(
+      home,
+      JSON.stringify({ skills: { disabled: "off" } }),
+    );
+
+    const result = load(makeDir("ja-settings-cwd-"), home);
+    expect(result.settings).toEqual({});
+    expect(result.warnings).toContain(
+      `設定ファイルの ${path} の skills.disabled が文字列の配列ではありません`,
+    );
+  });
+
+  it("skills.disabled は個人と作業フォルダの両方を合わせる（重複なし）", () => {
+    const home = makeDir("ja-settings-home-");
+    const cwd = makeDir("ja-settings-cwd-");
+    writeConfig(home, JSON.stringify({ skills: { disabled: ["a", "b"] } }));
+    writeConfig(cwd, JSON.stringify({ skills: { disabled: ["b", "c"] } }));
+
+    expect(load(cwd, home).settings).toEqual({
+      skills: { disabled: ["a", "b", "c"] },
+    });
+  });
+
   it("環境変数が設定ファイルより優先する", () => {
     const home = makeDir("ja-settings-home-");
     writeConfig(

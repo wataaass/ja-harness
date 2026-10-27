@@ -20,6 +20,7 @@ export type Settings = {
     enter?: SettingsEnter;
   };
   language?: { ui?: string };
+  skills?: { disabled?: string[] };
 };
 
 export type LoadSettingsOptions = {
@@ -41,6 +42,7 @@ const TOP_KEYS = new Set([
   "mode",
   "ui",
   "language",
+  "skills",
 ]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -167,6 +169,38 @@ function readFile(
         }
         break;
       }
+      case "skills": {
+        if (!isObject(value)) {
+          warnings.push(messages.settings.notObject(path, key));
+          break;
+        }
+        const skills: { disabled?: string[] } = {};
+        for (const [name, item] of Object.entries(value)) {
+          if (name === "disabled") {
+            if (
+              Array.isArray(item) &&
+              item.every((entry) => typeof entry === "string")
+            ) {
+              const disabled = item.filter(
+                (entry) => (entry as string).trim() !== "",
+              ) as string[];
+              if (disabled.length > 0) {
+                skills.disabled = disabled;
+              }
+            } else {
+              warnings.push(
+                messages.settings.notStringArray(path, "skills.disabled"),
+              );
+            }
+          } else {
+            warnings.push(messages.settings.unknown(path, `skills.${name}`));
+          }
+        }
+        if (Object.keys(skills).length > 0) {
+          values.skills = skills;
+        }
+        break;
+      }
       case "language": {
         if (!isObject(value)) {
           warnings.push(messages.settings.notObject(path, key));
@@ -204,6 +238,15 @@ function merge(base: Settings, next: Settings): Settings {
   }
   if (base.language !== undefined || next.language !== undefined) {
     merged.language = { ...base.language, ...next.language };
+  }
+  if (base.skills !== undefined || next.skills !== undefined) {
+    const disabled = [
+      ...new Set([
+        ...(base.skills?.disabled ?? []),
+        ...(next.skills?.disabled ?? []),
+      ]),
+    ];
+    merged.skills = disabled.length > 0 ? { disabled } : {};
   }
   return merged;
 }
