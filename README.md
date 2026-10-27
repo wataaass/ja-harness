@@ -8,7 +8,29 @@
 - AI の役割と自分の役割:（自分: 方針の決定と動作確認 / AI: 実装とレビュー。DeepSeek が書き、Claude がレビューする）
 
 ## 使い方
-（未定）
+```sh
+npm install && npm run build
+node dist/index.js              # 対話を始める（端末で）
+node dist/index.js "指示"        # 1回だけ答えて終わる
+node dist/index.js --continue   # いちばん新しいセッションの続き
+```
+
+API は OpenAI 互換。既定は OpenCode Go（`JA_HARNESS_BASE_URL`・`JA_HARNESS_MODEL`・`JA_HARNESS_API_KEY` で変える）。
+
+| キー | すること |
+| --- | --- |
+| Enter / Shift+Enter・Ctrl+J | 送る / 改行 |
+| Shift+Tab | モードを回す（実行・計画・質問） |
+| Esc | 止める。承認のカードでは却下 |
+| Enter（カード） | 今回だけ許可・採用。`a` 常に許可、`e` 理由を書く |
+| Ctrl+R | このやりとりの変更を見直す |
+| Ctrl+O | 途中経過の見せ方を切り替える |
+| ↑ / ↓ | 前の入力をたどる（作業中は待ち行列の文を呼び戻す） |
+| Ctrl+D 2回 | 終了 |
+
+主なコマンド: `/mode`・`/permission`・`/model`・`/undo`・`/resume`・`/clear`・`/compact`・`/context`・`/details`・`/help`。`@` でファイルを指定できる。
+
+品質と料金の測定は `node dist/index.js bench`（`bench/RESULTS.md`）。
 
 ## 使っている技術
 - Node.js 22 以上、TypeScript
