@@ -43,6 +43,9 @@ describe("parseBenchArgs", () => {
 
   it("validate・prepare・grade・help を読む", () => {
     expect(parseBenchArgs(["--validate"]).validate).toBe(true);
+    expect(parseBenchArgs(["--rerun-errors", "old.json"]).rerunErrors).toBe(
+      "old.json",
+    );
     expect(parseBenchArgs(["--prepare", "other"]).prepare).toBe("other");
     expect(parseBenchArgs(["--grade", "other"]).grade).toBe("other");
     expect(parseBenchArgs(["--help"]).help).toBe(true);
@@ -67,5 +70,11 @@ describe("parseBenchArgs", () => {
     expect(() => parseBenchArgs(["--prepare", "a", "--grade", "b"])).toThrow(
       "同時",
     );
+  });
+
+  it("rerun-errors と validate は同時に使えない", () => {
+    expect(() =>
+      parseBenchArgs(["--rerun-errors", "old.json", "--validate"]),
+    ).toThrow("同時");
   });
 });

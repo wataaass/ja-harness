@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runTurn } from "../agent/loop.js";
+import { type Complete, type LoopEvent, runTurn } from "../agent/loop.js";
 import { SYSTEM_PROMPT } from "../agent/prompt.js";
 import { readConfig } from "../cli/config.js";
 import { createEstimator } from "../context/tokens.js";
@@ -23,7 +23,7 @@ import {
   timestamp,
 } from "./workspace.js";
 
-const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+export const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
 export type StopReason = "done" | "max-steps" | "error";
 
@@ -70,6 +70,20 @@ function zeroUsage(): Usage {
   return { input: 0, cachedInput: 0, output: 0, reasoning: 0 };
 }
 
+function addUsage(total: Usage, usage: Usage): void {
+  total.input += usage.input;
+  total.cachedInput += usage.cachedInput;
+  total.output += usage.output;
+  total.reasoning += usage.reasoning;
+  if (usage.cost !== undefined) {
+    total.cost = (total.cost ?? 0) + usage.cost;
+  }
+}
+
+export function isExecutionFailure(record: BenchRecord): boolean {
+  return record.stop === "error" && record.steps === 0;
+}
+
 export function modelSlug(model: string): string {
   const slug = model.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return slug === "" ? "model" : slug;
@@ -114,9 +128,17 @@ export function formatProgress(
   record: BenchRecord,
 ): string {
   const seconds = Math.round(record.durationMs / 1000);
+  const prefix = `[${index}/${total}] ${record.task} ${record.condition} ${record.rep}回目`;
+  if (isExecutionFailure(record)) {
+    const reason = (record.error ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 60);
+    return `${prefix} 実行失敗 ${seconds}s${reason === "" ? "" : ` ${reason}`}`;
+  }
   const cost = record.usage.cost === undefined ? "—" : money(record.usage.cost);
   const result = record.pass ? "合格" : "不合格";
-  return `[${index}/${total}] ${record.task} ${record.condition} ${record.rep}回目 ${result} ${seconds}s ${cost}`;
+  return `${prefix} ${result} ${seconds}s ${cost}`;
 }
 
 function width(text: string): number {
@@ -157,15 +179,22 @@ type Stat = {
   total: number;
   passed: number;
   steps: number;
+  failed: number;
 };
 
 function stats(records: BenchRecord[]): Stat {
   const stat: Stat = {
-    total: records.length,
+    total: 0,
     passed: 0,
     steps: 0,
+    failed: 0,
   };
   for (const record of records) {
+    if (isExecutionFailure(record)) {
+      stat.failed += 1;
+      continue;
+    }
+    stat.total += 1;
     if (record.pass) {
       stat.passed += 1;
     }
@@ -176,6 +205,7 @@ function stats(records: BenchRecord[]): Stat {
 
 function averageCost(records: BenchRecord[]): number | undefined {
   const costs = records
+    .filter((record) => !isExecutionFailure(record))
     .map((record) => record.usage.cost)
     .filter((cost): cost is number => cost !== undefined);
   return costs.length === 0 ? undefined : average(costs);
@@ -189,7 +219,7 @@ export function formatResultsTable(
   const lines: string[] = [`モデル: ${model}`, "条件別"];
 
   const conditionRows: string[][] = [
-    ["条件", "合格", "合格率", "平均料金", "平均steps"],
+    ["条件", "合格", "合格率", "平均料金", "平均steps", "失敗"],
   ];
   for (const condition of conditions) {
     const group = records.filter((record) => record.condition === condition);
@@ -201,6 +231,7 @@ export function formatResultsTable(
       percent(stat.total === 0 ? 0 : stat.passed / stat.total),
       cost === undefined ? "—" : money(cost),
       (stat.total === 0 ? 0 : stat.steps / stat.total).toFixed(1),
+      String(stat.failed),
     ]);
   }
   lines.push(...render(conditionRows), "");
@@ -213,8 +244,11 @@ export function formatResultsTable(
       const group = records.filter(
         (record) => record.task === task && record.condition === condition,
       );
-      const passed = group.filter((record) => record.pass).length;
-      return `${passed}/${group.length}`;
+      const valid = group.filter((record) => !isExecutionFailure(record));
+      const passed = valid.filter((record) => record.pass).length;
+      const failed = group.length - valid.length;
+      const base = `${passed}/${valid.length}`;
+      return failed === 0 ? base : `${base}（失敗${failed}）`;
     });
     taskRows.push([task, ...cells]);
   }
@@ -253,14 +287,17 @@ export function formatResultsTable(
   return lines.join("\n");
 }
 
-async function runOne(options: {
+export type RunOneOptions = {
   task: ReturnType<typeof loadTasks>[number];
   condition: ConditionName;
   rep: number;
   workRoot: string;
   config: ReturnType<typeof readConfig>;
   turnTimeoutMs: number;
-}): Promise<BenchRecord> {
+  complete?: Complete;
+};
+
+export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
   const { task, condition, rep, workRoot, config, turnTimeoutMs } = options;
   const started = Date.now();
   const record: BenchRecord = {
@@ -289,16 +326,18 @@ async function runOne(options: {
 
   const estimate = createEstimator();
   const session = randomUUID();
-  const client = createClient({
-    baseUrl: config.baseUrl,
-    model: config.model,
-    ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
-    headers: { "x-opencode-session": session },
-  });
+  const complete =
+    options.complete ??
+    createClient({
+      baseUrl: config.baseUrl,
+      model: config.model,
+      ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
+      headers: { "x-opencode-session": session },
+    }).complete;
   const parts = createCondition({
     name: condition,
     workspace,
-    complete: client.complete,
+    complete,
     contextWindow: config.contextWindow,
     estimate,
   });
@@ -311,26 +350,40 @@ async function runOne(options: {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), turnTimeoutMs);
 
+  const eventUsage = zeroUsage();
+  let eventSteps = 0;
+  const onEvent = (event: LoopEvent): void => {
+    if (event.type !== "step-end") {
+      return;
+    }
+    eventSteps += 1;
+    addUsage(eventUsage, event.usage);
+  };
+
   let runError: string | undefined;
   try {
     const result = await runTurn({
-      complete: client.complete,
+      complete,
       tools: createTools(workspace, async () => true),
       messages,
       maxSteps: 30,
       signal: controller.signal,
+      onEvent,
       ...parts,
     });
     record.steps = result.steps;
     record.stop = result.stop;
     record.usage = result.usage;
   } catch (error) {
+    record.steps = eventSteps;
+    record.usage = eventUsage;
     record.stop = "error";
     runError = controller.signal.aborted ? "時間切れ" : errorMessage(error);
   } finally {
     clearTimeout(timer);
   }
 
+  let gradeError: string | undefined;
   try {
     const grade = await gradeWorkspace(task, workspace);
     record.pass = grade.pass;
@@ -338,11 +391,16 @@ async function runOne(options: {
     record.failed = grade.failed;
   } catch (error) {
     record.pass = false;
-    const gradeError = `採点に失敗: ${errorMessage(error)}`;
-    record.error =
-      runError === undefined ? gradeError : `${runError} / ${gradeError}`;
+    gradeError = `採点に失敗: ${errorMessage(error)}`;
   } finally {
     record.durationMs = Date.now() - started;
+  }
+
+  const errors = [runError, gradeError].filter(
+    (value): value is string => value !== undefined,
+  );
+  if (errors.length > 0) {
+    record.error = errors.join(" / ");
   }
 
   return record;

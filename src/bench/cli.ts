@@ -4,6 +4,7 @@ import {
   isConditionName,
 } from "./conditions.js";
 import { gradeExternal, prepareExternal } from "./external.js";
+import { rerunErrors } from "./rerun.js";
 import { runBench, validateTasks } from "./run.js";
 
 const BENCH_HELP = `使い方: ja-harness bench [オプション]
@@ -18,6 +19,7 @@ const BENCH_HELP = `使い方: ja-harness bench [オプション]
   --tasks-dir DIR       課題のフォルダ（既定 bench/tasks）
   --work-dir DIR        作業場所（既定は tmpdir。--grade は --prepare のフォルダ）
   --validate            API を呼ばずに課題を確かめる
+  --rerun-errors FILE   結果の JSON の中で実行失敗だけをやり直す
   --prepare NAME        他のハーネス用に作業場所を作る
   --grade NAME          他のハーネスの結果を採点する
   -h, --help            この使い方
@@ -31,6 +33,7 @@ export type BenchArgs = {
   tasksDir: string;
   workDir?: string;
   validate: boolean;
+  rerunErrors?: string;
   prepare?: string;
   grade?: string;
   help: boolean;
@@ -83,6 +86,10 @@ export function parseBenchArgs(args: string[]): BenchArgs {
       parsed.help = true;
     } else if (arg === "--validate") {
       parsed.validate = true;
+    } else if (arg === "--rerun-errors") {
+      const item = optionValue(args, index, arg);
+      parsed.rerunErrors = item.value;
+      index = item.next;
     } else if (arg === "--tasks") {
       const item = optionValue(args, index, arg);
       parsed.tasks = words(item.value, arg);
@@ -135,6 +142,16 @@ export function parseBenchArgs(args: string[]): BenchArgs {
   ) {
     throw new Error("--validate と --prepare / --grade は同時に使えません");
   }
+  if (
+    parsed.rerunErrors !== undefined &&
+    (parsed.validate ||
+      parsed.prepare !== undefined ||
+      parsed.grade !== undefined)
+  ) {
+    throw new Error(
+      "--rerun-errors と --validate / --prepare / --grade は同時に使えません",
+    );
+  }
 
   return parsed;
 }
@@ -161,6 +178,18 @@ export async function runBenchCli(
   }
 
   try {
+    if (options.rerunErrors !== undefined) {
+      const result = await rerunErrors({
+        resultsPath: options.rerunErrors,
+        tasksDir: options.tasksDir,
+        concurrency: options.concurrency,
+        ...(options.workDir === undefined ? {} : { workRoot: options.workDir }),
+        env,
+      });
+      process.stdout.write(`${result.table}\n結果: ${result.resultsPath}\n`);
+      return 0;
+    }
+
     if (options.prepare !== undefined) {
       const result = prepareExternal({
         name: options.prepare,
