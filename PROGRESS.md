@@ -10,7 +10,8 @@
 - PR #4（claude/tools、#3 の上、下書き）: 基本の道具 read・list・grep（rg があれば使い、なければ Node）・edit（str_replace、字下げを無視したゆるい一致）・write（新しいファイルだけ）・shell（プロセスグループごと止める）。CLI につなぎ、編集とシェルの前に端末で y/n を聞く（仮。差分のまとまりごとの採否は対話の画面で作る）。テスト212件。本物の API で読み取り・編集・シェル・確認中の Ctrl+C を確認済み
 - PR #5（claude/bench、#4 の上、下書き）: `ja-harness bench`（課題×条件×回、隠した grade で採点、`--validate`・`--rerun-errors`・`--prepare`/`--grade`）と課題8件。テスト249件。結果は `bench/RESULTS.md`
   - 2026-10-27: DeepSeek・MiMo・Qwen の各72回で品質は落ちていない。料金は DeepSeek −17%・MiMo −15%、Qwen は +6%（読み直しが増えた）。`docs/design/context.md` の「本物の API での品質と料金」
-- PR #1（claude/design-ui、下書き）: v0.1 の設計。コードはまだない
+- PR #6（claude/ui、#5 の上、下書き）: 対話の画面。`docs/design/ui.md` の項目はすべて入れた（モード・権限・計画・まとまりごとの採否・Ctrl+R・`/undo`・`/` と `@`・`/model`・セッションの保存と再開・`/context`・`/compact`・i18n）。テスト464件。疑似端末と本物の API で確認済み
+- PR #1（claude/design-ui、下書き）: v0.1 の設計
   - `docs/design/ui.md`: 画面（流れる形＋状態の行）、3つのモード、差分での確認、`/undo`、入力（IME の Enter）、`/` コマンド、セッションの保存、言語
   - `docs/design/context.md`: 往復、価格で決める masking、要約（64Kか上限の50%）、道具の結果の上限、キャッシュを壊さない決まりと hit 率の表示、そのほかの削減18項目、言語の設定、文字のそろえ方、設定ファイルの例
   - 2026-10-26: 料金は「1つの課題を終えるまでの総額」で比べ、最小の測定（`ja-harness bench`）を v0.1 に入れると決めた
@@ -18,9 +19,11 @@
   - `docs/research/reports/ハーネスのトークン削減技術.md`: 調査レポート（メモは `docs/research/research_notes/`）
 
 ## 次にやること
-1. 対話の画面（入力のくり返し、状態の行、モード、差分のまとまりごとの採否）
+1. 本人が対話の画面を実際の端末で触って確かめる（日本語入力の Enter、端末ごとの Shift+Enter、色）
 2. 道具の結果の上限（2,000・8,000）を価格から決める（キャッシュの割引が小さいモデルでは、上限を上げて読み直しを減らすほうが安い可能性）。決める前に本人に確認する
 3. bench の課題をもう少し難しくする（DeepSeek は3条件とも9割以上通る）
+4. 設定ファイル（`.ja-harness/config.json`）: 既定の権限・`ui.theme`・言語。いまは環境変数だけ
+5. v0.1 の残り: MCP 対応（nihongo-kit を標準で入れる）、subagent、リポジトリの地図など `docs/design/context.md` の「そのほかの削減」
 
 ## 覚えておくこと
 - 目的は料金の最適化（トークンの数ではない）。DeepSeek V4.1 Flash は cache hit が miss の約50分の1
@@ -37,3 +40,5 @@
 - OpenCode の DeepSeek が、ある関数の直し（spill.ts）で3回続けて20分以上止まった。本人の指示で、Claude Code の subagent（Haiku 5.5）に頼むと約2分で終わった。DeepSeek が2回止まったら、Haiku 5.5 に切り替えるか本人に聞く
 - `opencode run` は `< /dev/null` を付けて実行する（付けずにバックグラウンドで動かしたとき、25分なにも出さずに止まった）。外のフォルダを触ると自動で断られて止まるので、`~/.config/opencode/opencode.json` に `"permission":{"external_directory":"allow"}` を書いておく（コンテナを作り直したら再び要る）
 - CLI を端末なしで確かめるときは `script -qec "<コマンド>" /dev/null` で疑似端末にし、`(sleep 25; printf 'y\n') |` で答えを流す
+- 対話の画面を疑似端末で確かめるときは、pyte で画面を再現するスクリプト（pty でキーを送って画面を写す）を使う。コミットしていないので、要るときは作り直す（`pip install pyte`）
+- 対話の画面は Node の標準の上に自作した（Ink は使わない）。画面の文は `src/ui/i18n/ja.ts`
