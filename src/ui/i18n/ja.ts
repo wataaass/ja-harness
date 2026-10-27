@@ -94,14 +94,8 @@ export const ja = {
     moreLines: (n: number) => `…${n} more lines`,
     busy: " Available after the current task",
     stopped: " Stopped",
-    modelRow: (
-      label: string,
-      input: string,
-      cached: string,
-      output: string,
-      jaCost: string,
-    ) =>
-      `${label}   in ${input}  cache ${cached}  out ${output}   JA 1k chars $${jaCost}`,
+    modelRow: (label: string, input: string, cached: string, output: string) =>
+      `${label}   in $${input}  cache $${cached}  out $${output}`,
     sessionNotFound: (id: string) => ` Session not found: ${id}`,
     sessionLoadError: " Could not load the session",
     sessionContinue: (turns: number) =>

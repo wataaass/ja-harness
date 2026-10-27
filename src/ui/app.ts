@@ -23,12 +23,7 @@ import { loadSettings } from "../cli/settings.js";
 import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
 import { createEstimator, estimateMessages } from "../context/tokens.js";
-import {
-  costPer1kJaChars,
-  findModel,
-  MODELS,
-  type ModelInfo,
-} from "../llm/models.js";
+import { findModel, MODELS, type ModelInfo } from "../llm/models.js";
 import type { Message, ToolSpec, Usage } from "../llm/types.js";
 import type { Confirm, ConfirmRequest, Decision } from "../tools/confirm.js";
 import { computeHunks, formatHunk } from "../tools/hunks.js";
@@ -207,13 +202,11 @@ function priceText(value: number): string {
 }
 
 function modelRow(info: ModelInfo, messages: Messages): string {
-  const cost = costPer1kJaChars(info);
   return messages.app.modelRow(
     info.label,
     priceText(info.prices.input),
     priceText(info.prices.cachedInput),
     priceText(info.prices.output),
-    cost.toFixed(4),
   );
 }
 

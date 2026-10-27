@@ -1515,8 +1515,9 @@ describe("runApp のセッション", () => {
       const { input, output, result } = start({ complete, home, cwd });
 
       input.send("/model\r");
-      await waitFor(output, "in 0.15  cache 0.003  out 0.6");
+      await waitFor(output, "in $0.15  cache $0.003  out $0.6");
       expect(stripAnsi(output.text)).not.toContain("$ per 1M tokens");
+      expect(stripAnsi(output.text)).not.toContain("JA 1k chars");
       input.send("\x1b");
       await new Promise((resolve) => setTimeout(resolve, 20));
 

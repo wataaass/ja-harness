@@ -63,7 +63,3 @@ export const MODELS: ModelInfo[] = [
 export function findModel(id: string): ModelInfo | undefined {
   return MODELS.find((candidate) => candidate.id === id);
 }
-
-export function costPer1kJaChars(model: ModelInfo): number {
-  return (model.prices.input * 0.7) / 1000;
-}
