@@ -22,6 +22,21 @@ export const ja = {
     "auto-all": "すべて自動",
   },
 
+  settings: {
+    broken: (path: string) =>
+      `設定ファイルの ${path} が壊れています（JSON として読めません）`,
+    shape: (path: string) => `設定ファイルの ${path} の形が正しくありません`,
+    unreadable: (path: string) => `設定ファイルの ${path} を読めません`,
+    unknown: (path: string, key: string) =>
+      `設定ファイルの ${path} の ${key} は知らない設定です`,
+    invalid: (path: string, key: string, allowed: string) =>
+      `設定ファイルの ${path} の ${key} が正しくありません（${allowed} のどれか）`,
+    notString: (path: string, key: string) =>
+      `設定ファイルの ${path} の ${key} が文字列ではありません`,
+    notObject: (path: string, key: string) =>
+      `設定ファイルの ${path} の ${key} がオブジェクトではありません`,
+  },
+
   status: {
     queued: (n: number) => `待ち ${n}件`,
     context: (percent: number) => `文脈 ${percent}%`,

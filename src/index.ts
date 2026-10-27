@@ -8,6 +8,7 @@ import { runBenchCli } from "./bench/cli.js";
 import { readConfig } from "./cli/config.js";
 import { createTerminalConfirm } from "./cli/confirm.js";
 import { formatToolStart } from "./cli/events.js";
+import { loadSettings } from "./cli/settings.js";
 import { formatUsage } from "./cli/usage.js";
 import { createContextManager, DEFAULT_CONTEXT } from "./context/manager.js";
 import { createFileSaver, limitToolResult } from "./context/spill.js";
@@ -32,9 +33,17 @@ const HELP = `使い方: ja-harness [--resume <id> | --continue]
   --continue     いちばん新しいセッションの続きから始める
   bench          品質と料金を測る（ja-harness bench --help）
 
+設定ファイル:
+  ~/.ja-harness/config.json と ./.ja-harness/config.json（作業フォルダのほうが優先）
+  例: {"model": "deepseek-v4-pro", "effort": "high", "permission": "auto-edit"}
+      {"mode": "plan", "ui": {"theme": "light", "details": "verbose"}}
+      {"language": {"ui": "ja"}}
+
 環境変数:
   JA_HARNESS_BASE_URL   API の URL
   JA_HARNESS_MODEL      使うモデル
+  JA_HARNESS_EFFORT     推論の量（low・medium・high）
+  JA_HARNESS_LANG       画面の言語
   JA_HARNESS_API_KEY    API キー（OPENCODE_API_KEY でもよい）
 `;
 
@@ -106,11 +115,17 @@ async function main(): Promise<number> {
 
   const instruction = rest.join(" ");
   const { contextWindow, ...clientConfig } = readConfig(process.env);
+  const { settings } = loadSettings({
+    cwd: process.cwd(),
+    home: process.env.HOME ?? process.cwd(),
+    env: process.env,
+  });
   const client = createClient({
     ...clientConfig,
-    ...(process.env.JA_HARNESS_EFFORT === undefined
+    model: settings.model ?? clientConfig.model,
+    ...(settings.effort === undefined
       ? {}
-      : { reasoningEffort: process.env.JA_HARNESS_EFFORT }),
+      : { reasoningEffort: settings.effort }),
     headers: { "x-opencode-session": randomUUID() },
   });
   const estimate = createEstimator();

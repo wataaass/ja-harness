@@ -140,11 +140,17 @@ function start(options: {
   model?: string;
   resume?: string;
   continueLatest?: boolean;
+  env?: NodeJS.ProcessEnv;
+  isTTY?: boolean;
 }) {
   const input = new FakeInput();
   const output = new FakeOutput();
   if (options.columns !== undefined) {
     output.columns = options.columns;
+  }
+  if (options.isTTY === true) {
+    input.isTTY = true;
+    output.isTTY = true;
   }
   const complete = options.complete;
   const makeComplete =
@@ -158,7 +164,7 @@ function start(options: {
   const result = runApp({
     input,
     output,
-    env: {},
+    env: options.env ?? {},
     cwd: options.cwd ?? "/work",
     home: options.home ?? mkdtempSync(join(tmpdir(), "ja-harness-home-")),
     makeComplete,
@@ -211,6 +217,13 @@ async function close(
   await waitFor(output, "もう一度 Ctrl+D で終了");
   input.send("\x04");
   return result;
+}
+
+function writeSettingsConfig(dir: string, value: unknown): string {
+  const path = join(dir, ".ja-harness", "config.json");
+  mkdirSync(join(dir, ".ja-harness"), { recursive: true });
+  writeFileSync(path, JSON.stringify(value));
+  return path;
 }
 
 function confirmTool(seen: Decision[]): (confirm: Confirm) => Tool[] {
@@ -1448,6 +1461,143 @@ describe("runApp のセッション", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runApp の設定ファイル", () => {
+  it("設定の permission を起動時の既定に使う", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writeSettingsConfig(home, { permission: "auto-edit" });
+      const seen: { tool: string; allow: boolean }[] = [];
+      const makeTool = (confirm: Confirm, name: string): Tool => ({
+        name,
+        description: name,
+        parameters: {},
+        execute: async () => {
+          const decision = await confirm({
+            tool: name,
+            title: `${name} を実行`,
+            detail: name,
+          });
+          seen.push({
+            tool: name,
+            allow: typeof decision === "boolean" ? decision : decision.allow,
+          });
+          return "ok";
+        },
+      });
+      const { complete } = sequence([
+        call("edit", {}, "call-edit"),
+        call("shell", {}, "call-shell"),
+        answer("done"),
+      ]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        cwd,
+        createTools: (confirm) => [
+          makeTool(confirm, "edit"),
+          makeTool(confirm, "shell"),
+        ],
+      });
+
+      await waitFor(output, "編集は自動");
+      input.send("go\r");
+      await waitFor(output, "Enter 許可");
+      input.send("\r");
+      await waitFor(output, "done");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(seen).toEqual([
+        { tool: "edit", allow: true },
+        { tool: "shell", allow: true },
+      ]);
+      expect(stripAnsi(output.text)).not.toContain("edit を実行");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("設定の mode を起動時の既定に使う", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writeSettingsConfig(home, { mode: "plan" });
+      let executes = 0;
+      const editTool: Tool = {
+        name: "edit",
+        description: "edit",
+        parameters: {},
+        execute: async () => {
+          executes += 1;
+          return "ok";
+        },
+      };
+      const { complete, calls } = sequence([call("edit", {}), answer("done")]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        cwd,
+        createTools: () => [editTool],
+      });
+
+      await waitFor(output, "計画");
+      input.send("go\r");
+      await waitFor(output, "done");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(executes).toBe(0);
+      const toolMessage = calls[1]?.find((message) => message.role === "tool");
+      expect(toolMessage?.content).toContain("Not allowed in plan mode.");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("設定の ui.theme が light なら明るい藍を使う", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    try {
+      writeSettingsConfig(home, { ui: { theme: "light" } });
+      const { complete } = sequence([]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        env: { COLORTERM: "truecolor" },
+        isTTY: true,
+      });
+
+      await waitFor(output, "ja-harness 0.1");
+      expect(output.text).toContain("\u001B[38;2;22;94;131m");
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("設定ファイルの警告をあいさつのあとに1行ずつ出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    try {
+      const path = join(home, ".ja-harness", "config.json");
+      mkdirSync(join(home, ".ja-harness"), { recursive: true });
+      writeFileSync(path, "{");
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home });
+
+      await waitFor(output, "壊れています");
+      expect(await close(input, output, result)).toBe(0);
+
+      const text = stripAnsi(output.text);
+      expect(text).toContain(`設定ファイルの ${path}`);
+      expect(text.indexOf("壊れています")).toBeGreaterThan(
+        text.indexOf("ja-harness 0.1"),
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

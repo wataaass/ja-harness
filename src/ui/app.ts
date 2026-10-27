@@ -18,6 +18,7 @@ import {
 import { notice } from "../agent/notice.js";
 import { SYSTEM_PROMPT } from "../agent/prompt.js";
 import { createRepeatTracker } from "../agent/repeat.js";
+import { loadSettings } from "../cli/settings.js";
 import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
 import { createEstimator, estimateMessages } from "../context/tokens.js";
@@ -241,25 +242,29 @@ function sessionRow(session: SessionSummary, messages: Messages): string {
 export async function runApp(o: AppOptions): Promise<number> {
   const timing = { ...DEFAULT_TIMING, ...o.timing };
   const screen = createScreen(o.output);
+  const { settings, warnings } = loadSettings({
+    cwd: o.cwd,
+    home: o.home ?? o.cwd,
+    env: o.env,
+  });
   const theme = createTheme({
     env: o.env,
     isTTY: o.output.isTTY ?? o.input.isTTY ?? false,
+    ...(settings.ui?.theme === "dark" ? { dark: true } : {}),
+    ...(settings.ui?.theme === "light" ? { dark: false } : {}),
   });
-  const messages = getMessages(o.lang ?? o.env.JA_HARNESS_LANG);
+  const messages = getMessages(o.lang ?? settings.language?.ui);
   const commandList = commands(messages);
   const history = createHistory();
   const estimate = createEstimator();
   const saver = createFileSaver(join(o.cwd, ".ja-harness", "out"));
   const save = (text: string) => relative(o.cwd, saver(text));
 
-  let mode: Mode = "run";
-  let permission: Permission = "ask";
-  let model = o.model;
+  let mode: Mode = settings.mode ?? "run";
+  let permission: Permission = settings.permission ?? "ask";
+  let model = settings.model ?? o.model;
   let effort =
-    o.effort ??
-    o.env.JA_HARNESS_EFFORT ??
-    findModel(o.model)?.defaultEffort ??
-    "high";
+    o.effort ?? settings.effort ?? findModel(model)?.defaultEffort ?? "high";
 
   const currentComplete = (): Complete => o.makeComplete(model, effort);
 
@@ -305,7 +310,7 @@ export async function runApp(o: AppOptions): Promise<number> {
   let abort: AbortController | undefined;
   let stopShown = false;
   let turnSaved = false;
-  let details = false;
+  let details = settings.ui?.details === "verbose";
   let reasoningBuffer = "";
   let reasoningShown = false;
   let slashIndex = 0;
@@ -2276,6 +2281,9 @@ export async function runApp(o: AppOptions): Promise<number> {
     }),
     ...startupLines,
   ]);
+  if (warnings.length > 0) {
+    screen.print(warnings.map((text) => theme.warn(text)));
+  }
   booted = true;
   render();
 
