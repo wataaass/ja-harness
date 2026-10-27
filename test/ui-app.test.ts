@@ -871,3 +871,194 @@ describe("runApp の追加機能", () => {
     });
   });
 });
+
+function hunkTool(
+  seen: Decision[],
+  hunks: string[][],
+): (confirm: Confirm) => Tool[] {
+  return (confirm) => [
+    {
+      name: "edit",
+      description: "edit",
+      parameters: {},
+      execute: async () => {
+        const decision = await confirm({
+          tool: "edit",
+          title: "a.ts を編集します",
+          detail: "",
+          hunks,
+        });
+        seen.push(
+          typeof decision === "boolean" ? { allow: decision } : decision,
+        );
+        return "ok";
+      },
+    },
+  ];
+}
+
+const TWO_HUNKS = [
+  ["@@ line 1 @@", "-a", "+A"],
+  ["@@ line 5 @@", "-b", "+B"],
+];
+
+describe("runApp のまとまりごとの確認と取り消し", () => {
+  it("2つのまとまりで Enter と Esc を押すと1つだけ反映する", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-hunks-"));
+    try {
+      writeFileSync(join(cwd, "a.txt"), "a\nb\nc\nd\ne\nf\ng\nh\ni\n");
+      const { complete } = sequence([
+        call("edit", {
+          path: "a.txt",
+          edits: [
+            { oldText: "b", newText: "B" },
+            { oldText: "h", newText: "H" },
+          ],
+        }),
+        answer("done"),
+      ]);
+      const { input, output, result } = start({ complete, cwd });
+
+      input.send("go\r");
+      await waitFor(output, "編集の案  a.txt  1/2");
+      input.send("\r");
+      await waitFor(output, "編集の案  a.txt  2/2");
+      input.send("\x1b");
+      await waitFor(output, "done");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe(
+        "a\nB\nc\nd\ne\nf\ng\nh\ni\n",
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("a で残りを全部採用する", async () => {
+    const seen: Decision[] = [];
+    const { complete } = sequence([call("edit", {}), answer("done")]);
+    const { input, output, result } = start({
+      complete,
+      createTools: hunkTool(seen, TWO_HUNKS),
+    });
+
+    input.send("go\r");
+    await waitFor(output, "編集の案  a.ts  1/2");
+    input.send("a");
+    await waitFor(output, "done");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(seen).toEqual([{ allow: true, acceptedHunks: [true, true] }]);
+  });
+
+  it("e で理由を書くと残りを却下して理由が届く", async () => {
+    const seen: Decision[] = [];
+    const { complete } = sequence([call("edit", {}), answer("done")]);
+    const { input, output, result } = start({
+      complete,
+      createTools: hunkTool(seen, TWO_HUNKS),
+    });
+
+    input.send("go\r");
+    await waitFor(output, "編集の案  a.ts  1/2");
+    input.send("\r");
+    await waitFor(output, "編集の案  a.ts  2/2");
+    input.send("e");
+    await waitFor(output, "却下の理由");
+    input.send("まだ早い\r");
+    await waitFor(output, "done");
+
+    expect(await close(input, output, result)).toBe(0);
+    expect(seen).toEqual([
+      {
+        allow: true,
+        acceptedHunks: [true, false],
+        reason: "まだ早い",
+      },
+    ]);
+  });
+
+  it("Ctrl+R で見直し、←→ でファイルを切り替え、i の指示を送る", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-review-"));
+    try {
+      writeFileSync(join(cwd, "a.txt"), "a\n");
+      writeFileSync(join(cwd, "b.txt"), "b\n");
+      const { complete, calls } = sequence([
+        call("edit", {
+          path: "a.txt",
+          edits: [{ oldText: "a", newText: "A" }],
+        }),
+        call("edit", {
+          path: "b.txt",
+          edits: [{ oldText: "b", newText: "B" }],
+        }),
+        answer("done"),
+        answer("了解"),
+      ]);
+      const { input, output, result } = start({ complete, cwd });
+
+      input.send("/permission 編集は自動\r");
+      await waitFor(output, "編集は自動");
+      input.send("go\r");
+      await waitFor(output, "done");
+      await waitFor(output, "今回");
+
+      input.send("\x12");
+      await waitFor(output, "見直し  a.txt  1/2");
+      input.send("\x1b[C");
+      await waitFor(output, "見直し  b.txt  2/2");
+      input.send("i");
+      await waitFor(output, "追加の指示");
+      input.send("もっと\r");
+      await waitFor(output, "了解");
+
+      expect(await close(input, output, result)).toBe(0);
+      expect(calls.at(-1)?.at(-1)).toEqual({
+        role: "user",
+        content: "もっと",
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/undo でファイルを戻し、次の発言の前に notice を入れる", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-undo-"));
+    try {
+      writeFileSync(join(cwd, "a.txt"), "old\n");
+      const { complete, calls } = sequence([
+        call("edit", {
+          path: "a.txt",
+          edits: [{ oldText: "old", newText: "new" }],
+        }),
+        answer("done"),
+        answer("again ok"),
+      ]);
+      const { input, output, result } = start({ complete, cwd });
+
+      input.send("/permission 編集は自動\r");
+      await waitFor(output, "編集は自動");
+      input.send("go\r");
+      await waitFor(output, "done");
+      await waitFor(output, "今回");
+
+      input.send("/undo\r");
+      await waitFor(output, "戻しました: a.txt（1件）");
+      await waitFor(output, "シェルで変えたファイルは戻りません");
+      expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("old\n");
+
+      input.send("again\r");
+      await waitFor(output, "again ok");
+
+      expect(await close(input, output, result)).toBe(0);
+      const last = calls.at(-1) ?? [];
+      expect(last.at(-2)?.content).toContain(
+        "The user undid your changes to: a.txt.",
+      );
+      expect(last.at(-1)).toEqual({ role: "user", content: "again" });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});

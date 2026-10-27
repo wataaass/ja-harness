@@ -99,3 +99,18 @@ describe("write の却下の理由", () => {
     expect(existsSync(join(cwd, "a.txt"))).toBe(false);
   });
 });
+
+describe("write tool の beforeWrite", () => {
+  it("書く直前に呼ばれ、そのときファイルはまだ無い", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-write-"));
+    const seen: boolean[] = [];
+    const confirm = vi.fn<Confirm>(async () => true);
+
+    await createWriteTool(cwd, confirm, (abs) => {
+      seen.push(existsSync(abs));
+    }).execute({ path: "a.txt", content: "hi\n" });
+
+    expect(seen).toEqual([false]);
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("hi\n");
+  });
+});

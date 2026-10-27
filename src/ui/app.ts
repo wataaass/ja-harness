@@ -1,4 +1,11 @@
-import { type Dirent, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  type Dirent,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join, relative } from "node:path";
 import {
   type Complete,
@@ -21,8 +28,10 @@ import {
 } from "../llm/models.js";
 import type { Message, Usage } from "../llm/types.js";
 import type { Confirm, ConfirmRequest, Decision } from "../tools/confirm.js";
+import { computeHunks, formatHunk } from "../tools/hunks.js";
 import { createTools, type PlanHandler } from "../tools/index.js";
 import { renderCard } from "./card.js";
+import { type CheckpointFile, createCheckpoints } from "./checkpoints.js";
 import { applyKey, type EditorState, renderEditor } from "./editor.js";
 import { formatTurnSummary } from "./format.js";
 import { renderGreeting } from "./greeting.js";
@@ -98,8 +107,18 @@ export type AppOptions = {
 type PendingConfirm = {
   request: ConfirmRequest;
   resolve: (decision: Decision) => void;
-  phase: "card" | "reason";
+  phase: "card" | "hunk" | "reason";
   reason: EditorState;
+  hunkIndex?: number;
+  hunkAccepted?: boolean[];
+};
+
+type Review = {
+  files: CheckpointFile[];
+  index: number;
+  scroll: number;
+  phase: "card" | "input";
+  input: EditorState;
 };
 
 type PendingPlan = {
@@ -144,14 +163,13 @@ const COMMANDS: Command[] = [
 const HELP_LINES = [
   " キー",
   "  Enter 送る  Shift+Enter か Ctrl+J 改行  ↑↓ 前の入力",
-  "  Shift+Tab モード  Ctrl+O 途中経過  Ctrl+C 入力を消す  Ctrl+D 2回で終了",
+  "  Shift+Tab モード  Ctrl+O 途中経過  Ctrl+R 変更の見直し  Ctrl+C 入力を消す  Ctrl+D 2回で終了",
   "  Esc 止める・閉じる  Tab 候補を入れる",
   " コマンド",
   "  /help /mode /permission /model /details /undo /resume /clear /compact /summarize /context",
 ];
 
 const UNIMPLEMENTED = new Set([
-  "/undo",
   "/resume",
   "/clear",
   "/compact",
@@ -231,8 +249,10 @@ export async function runApp(o: AppOptions): Promise<number> {
   const queue: QueuedInput[] = [];
   const alwaysAllowed = new Set<string>();
 
+  const checkpoints = createCheckpoints();
   let editor: EditorState = { text: "", cursor: 0 };
   let pending: PendingConfirm | undefined;
+  let review: Review | undefined;
   let plan: PendingPlan | undefined;
   let picker: Picker | undefined;
   let warning: Warning | undefined;
@@ -403,6 +423,71 @@ export async function runApp(o: AppOptions): Promise<number> {
     });
   }
 
+  function editPath(title: string): string {
+    const suffix = " を編集します";
+    return title.endsWith(suffix) ? title.slice(0, -suffix.length) : title;
+  }
+
+  function reviewDiff(file: CheckpointFile): string[] {
+    const before = file.before ?? "";
+    let after = "";
+    if (existsSync(file.path)) {
+      try {
+        after = readFileSync(file.path, "utf8");
+      } catch {
+        after = "";
+      }
+    }
+    const hunks = computeHunks(before, after);
+    return hunks.flatMap((hunk, index) =>
+      formatHunk(file.path, hunk, index, hunks.length),
+    );
+  }
+
+  function reviewView(maxWidth: number): {
+    lines: string[];
+    cursor?: { row: number; col: number };
+  } {
+    const current = review;
+    if (current === undefined) {
+      return { lines: [] };
+    }
+    const file = current.files[current.index];
+    if (file === undefined) {
+      return { lines: [] };
+    }
+    const path = relative(o.cwd, file.path) || file.path;
+
+    if (current.phase === "input") {
+      const rendered = renderEditor(current.input, editorWidth(maxWidth));
+      return {
+        lines: renderCard({
+          title: "追加の指示",
+          body: bodyLines(rendered.lines),
+          footer: "Enter 送る  Esc 戻る",
+          width: maxWidth,
+          theme,
+        }),
+        cursor: { row: 1 + rendered.cursorRow, col: 4 + rendered.cursorCol },
+      };
+    }
+
+    const diff = reviewDiff(file);
+    const body = diff.slice(current.scroll, current.scroll + 20);
+    if (body.length === 0) {
+      body.push("変更はありません");
+    }
+    return {
+      lines: renderCard({
+        title: `見直し  ${path}  ${current.index + 1}/${current.files.length}`,
+        body,
+        footer: "←→ ファイル  ↑↓ 読み進める  i 指示を書く  Esc 閉じる",
+        width: maxWidth,
+        theme,
+      }),
+    };
+  }
+
   function render(): void {
     if (closed) {
       return;
@@ -428,6 +513,21 @@ export async function runApp(o: AppOptions): Promise<number> {
           row: top + 1 + rendered.cursorRow,
           col: 4 + rendered.cursorCol,
         };
+      } else if (
+        pending.phase === "hunk" &&
+        pending.request.hunks !== undefined
+      ) {
+        const hunks = pending.request.hunks;
+        const index = pending.hunkIndex ?? 0;
+        lines.push(
+          ...renderCard({
+            title: `編集の案  ${editPath(pending.request.title)}  ${index + 1}/${hunks.length}`,
+            body: hunks[index] ?? [],
+            footer: "Enter 採用  Esc 却下  a このファイルは全部  e 理由を書く",
+            width: maxWidth,
+            theme,
+          }),
+        );
       } else {
         const detail = pending.request.detail.split(/\r?\n/);
         const body = detail.slice(0, 20);
@@ -443,6 +543,16 @@ export async function runApp(o: AppOptions): Promise<number> {
             theme,
           }),
         );
+      }
+    } else if (review !== undefined) {
+      const top = lines.length;
+      const view = reviewView(maxWidth);
+      lines.push(...view.lines);
+      if (view.cursor !== undefined) {
+        cursor = {
+          row: top + view.cursor.row,
+          col: view.cursor.col,
+        };
       }
     } else if (plan !== undefined) {
       const top = lines.length;
@@ -709,11 +819,14 @@ export async function runApp(o: AppOptions): Promise<number> {
       return Promise.resolve({ allow: true });
     }
     return new Promise<Decision>((resolve) => {
+      const hunks = request.hunks;
+      const withHunks = hunks !== undefined && hunks.length > 0;
       pending = {
         request,
         resolve,
-        phase: "card",
+        phase: withHunks ? "hunk" : "card",
         reason: { text: "", cursor: 0 },
+        ...(withHunks ? { hunkIndex: 0, hunkAccepted: [] } : {}),
       };
       render();
     });
@@ -806,20 +919,33 @@ export async function runApp(o: AppOptions): Promise<number> {
     if (pending === undefined) {
       return;
     }
+    const hunks = pending.request.hunks;
+    const hasHunks = hunks !== undefined && hunks.length > 0;
+
     if (key.type === "ctrl" && key.key === "d") {
-      resolvePending({ allow: false });
+      if (hunks !== undefined && hunks.length > 0) {
+        resolvePending({
+          allow: false,
+          acceptedHunks: hunks.map(() => false),
+        });
+      } else {
+        resolvePending({ allow: false });
+      }
       return;
     }
+
     if (pending.phase === "reason") {
       if (key.type === "escape") {
-        pending.phase = "card";
+        pending.phase = hasHunks ? "hunk" : "card";
         render();
         return;
       }
       if (key.type === "enter") {
         const reason = pending.reason.text.trim();
+        const accepted = pending.hunkAccepted;
         resolvePending({
-          allow: false,
+          allow: accepted?.some(Boolean) ?? false,
+          ...(accepted === undefined ? {} : { acceptedHunks: accepted }),
           ...(reason === "" ? {} : { reason }),
         });
         return;
@@ -827,6 +953,57 @@ export async function runApp(o: AppOptions): Promise<number> {
       const result = applyKey(pending.reason, key);
       pending.reason = result.state;
       render();
+      return;
+    }
+
+    if (pending.phase === "hunk" && hunks !== undefined && hunks.length > 0) {
+      const active = pending;
+      const index = active.hunkIndex ?? 0;
+      const accepted = [...(active.hunkAccepted ?? [])];
+      const finish = (): void => {
+        resolvePending({
+          allow: accepted.some(Boolean),
+          acceptedHunks: accepted,
+        });
+      };
+      const step = (accept: boolean): void => {
+        accepted[index] = accept;
+        if (index + 1 < hunks.length) {
+          active.hunkIndex = index + 1;
+          active.hunkAccepted = accepted;
+          render();
+        } else {
+          finish();
+        }
+      };
+
+      if (key.type === "enter") {
+        step(true);
+        return;
+      }
+      if (key.type === "escape") {
+        step(false);
+        return;
+      }
+      if (key.type === "char") {
+        const text = key.text.toLowerCase();
+        if (text.includes("a")) {
+          for (let i = index; i < hunks.length; i += 1) {
+            accepted[i] = true;
+          }
+          finish();
+          return;
+        }
+        if (text.includes("e")) {
+          for (let i = index; i < hunks.length; i += 1) {
+            accepted[i] = false;
+          }
+          active.hunkAccepted = accepted;
+          active.phase = "reason";
+          active.reason = { text: "", cursor: 0 };
+          render();
+        }
+      }
       return;
     }
 
@@ -922,6 +1099,87 @@ export async function runApp(o: AppOptions): Promise<number> {
     }
     if (key.type === "escape" || (key.type === "ctrl" && key.key === "d")) {
       warning = undefined;
+      render();
+    }
+  }
+
+  function openReview(): void {
+    const files = checkpoints.changedFiles(0);
+    if (files.length === 0) {
+      emit([" 見直す変更がありません"]);
+      return;
+    }
+    review = {
+      files,
+      index: 0,
+      scroll: 0,
+      phase: "card",
+      input: { text: "", cursor: 0 },
+    };
+    render();
+  }
+
+  function handleReviewKey(key: Key): void {
+    const current = review;
+    if (current === undefined) {
+      return;
+    }
+
+    if (current.phase === "input") {
+      if (key.type === "escape") {
+        current.phase = "card";
+        render();
+        return;
+      }
+      if (key.type === "ctrl" && key.key === "d") {
+        review = undefined;
+        render();
+        return;
+      }
+      if (key.type === "enter") {
+        const text = current.input.text.trim();
+        if (text === "") {
+          return;
+        }
+        review = undefined;
+        submit(text);
+        return;
+      }
+      const result = applyKey(current.input, key);
+      current.input = result.state;
+      render();
+      return;
+    }
+
+    if (key.type === "escape" || (key.type === "ctrl" && key.key === "d")) {
+      review = undefined;
+      render();
+      return;
+    }
+    if (key.type === "left" || key.type === "right") {
+      const length = current.files.length;
+      current.index =
+        key.type === "left"
+          ? (current.index - 1 + length) % length
+          : (current.index + 1) % length;
+      current.scroll = 0;
+      render();
+      return;
+    }
+    if (key.type === "up" || key.type === "down") {
+      const file = current.files[current.index];
+      const length = file === undefined ? 0 : reviewDiff(file).length;
+      const max = Math.max(0, length - 1);
+      current.scroll =
+        key.type === "up"
+          ? Math.max(0, current.scroll - 1)
+          : Math.min(max, current.scroll + 1);
+      render();
+      return;
+    }
+    if (key.type === "char" && key.text.toLowerCase().includes("i")) {
+      current.phase = "input";
+      current.input = { text: "", cursor: 0 };
       render();
     }
   }
@@ -1058,6 +1316,24 @@ export async function runApp(o: AppOptions): Promise<number> {
       case "/details":
         toggleDetails();
         return true;
+      case "/undo": {
+        const parsed = arg === "" ? 1 : Number.parseInt(arg, 10);
+        const count =
+          Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 1;
+        const undo = checkpoints.undo(count);
+        const paths = [...new Set([...undo.restored, ...undo.deleted])];
+        if (paths.length === 0) {
+          emit([" 戻す変更がありません"]);
+          return true;
+        }
+        const shown = paths.map((path) => relative(o.cwd, path) || path);
+        emit([
+          ` 戻しました: ${shown.join(", ")}（${shown.length}件）`,
+          " （シェルで変えたファイルは戻りません）",
+        ]);
+        pendingNotice = `The user undid your changes to: ${shown.join(", ")}. Read them again before editing.`;
+        return true;
+      }
       case "/mode": {
         const chosen = arg === "" ? undefined : parseMode(arg);
         if (chosen !== undefined) {
@@ -1144,6 +1420,10 @@ export async function runApp(o: AppOptions): Promise<number> {
       handleConfirmKey(key);
       return;
     }
+    if (review !== undefined) {
+      handleReviewKey(key);
+      return;
+    }
 
     if (key.type === "escape") {
       if (busy) {
@@ -1219,6 +1499,10 @@ export async function runApp(o: AppOptions): Promise<number> {
     }
     if (action === "details") {
       toggleDetails();
+      return;
+    }
+    if (action === "review") {
+      openReview();
       return;
     }
     if (action === "history-prev") {
@@ -1401,6 +1685,7 @@ export async function runApp(o: AppOptions): Promise<number> {
     if (closed) {
       return;
     }
+    checkpoints.beginTurn();
     if (noticeText !== undefined) {
       messages.push(notice(noticeText));
     }
@@ -1416,7 +1701,12 @@ export async function runApp(o: AppOptions): Promise<number> {
     render();
 
     const created = (
-      o.createTools ?? ((fn, planFn) => createTools(o.cwd, fn, planFn))
+      o.createTools ??
+      ((fn, planFn) =>
+        createTools(o.cwd, fn, {
+          plan: planFn,
+          beforeWrite: (abs) => checkpoints.recordBefore(abs),
+        }))
     )(confirmWithPermission, planHandler);
     const tools = created.map((tool) => ({
       ...tool,

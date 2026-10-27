@@ -116,6 +116,7 @@ describe("edit tool", () => {
       tool: "edit",
       title: "a.txt を編集します",
       detail: ["@@ line 1 @@", " a", "-b", "+B"].join("\n"),
+      hunks: [["@@ line 1 @@", " a", "-b", "+B"]],
     });
   });
 
@@ -207,5 +208,85 @@ describe("edit tool の却下の理由", () => {
       "The user declined this edit. Ask what they want instead.\nReason from the user: 別の直し方にして",
     );
     expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("a\nb\n");
+  });
+});
+
+describe("edit tool のまとまりごとの採用", () => {
+  it("採用したまとまりだけを反映し、結果にその旨を出す", async () => {
+    const cwd = setup({ "a.txt": "a\nb\nc\nd\ne\nf\ng\nh\ni\n" });
+    const confirm = vi.fn<Confirm>(async () => ({
+      allow: true,
+      acceptedHunks: [true, false],
+    }));
+
+    const result = await createEditTool(cwd, confirm).execute({
+      path: "a.txt",
+      edits: [
+        { oldText: "b", newText: "B" },
+        { oldText: "h", newText: "H" },
+      ],
+    });
+
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe(
+      "a\nB\nc\nd\ne\nf\ng\nh\ni\n",
+    );
+    expect(result).toContain(
+      "Edited a.txt: applied 1 of 2 hunks; the user rejected hunk 2 (around line 6).",
+    );
+    expect(result).toContain("2\tB");
+    expect(result).not.toContain("8\tH");
+  });
+
+  it("理由も結果の末尾に付ける", async () => {
+    const cwd = setup({ "a.txt": "a\nb\nc\nd\ne\nf\ng\nh\ni\n" });
+    const confirm = vi.fn<Confirm>(async () => ({
+      allow: true,
+      acceptedHunks: [true, false],
+      reason: "後半はまだ早い",
+    }));
+
+    const result = await createEditTool(cwd, confirm).execute({
+      path: "a.txt",
+      edits: [
+        { oldText: "b", newText: "B" },
+        { oldText: "h", newText: "H" },
+      ],
+    });
+
+    expect(result).toContain("Reason from the user: 後半はまだ早い");
+  });
+
+  it("1つも採用されなければ却下と同じにする", async () => {
+    const cwd = setup({ "a.txt": "a\nb\nc\n" });
+    const confirm = vi.fn<Confirm>(async () => ({
+      allow: true,
+      acceptedHunks: [false],
+    }));
+
+    const result = await createEditTool(cwd, confirm).execute({
+      path: "a.txt",
+      edits: [{ oldText: "b", newText: "B" }],
+    });
+
+    expect(result).toBe(
+      "The user declined this edit. Ask what they want instead.",
+    );
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("a\nb\nc\n");
+  });
+
+  it("書く直前に beforeWrite を呼ぶ", async () => {
+    const cwd = setup({ "a.txt": "a\nb\n" });
+    const seen: string[] = [];
+    const confirm = vi.fn<Confirm>(async () => true);
+
+    await createEditTool(cwd, confirm, (abs) => {
+      seen.push(readFileSync(abs, "utf8"));
+    }).execute({
+      path: "a.txt",
+      edits: [{ oldText: "b", newText: "B" }],
+    });
+
+    expect(seen).toEqual(["a\nb\n"]);
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("a\nB\n");
   });
 });

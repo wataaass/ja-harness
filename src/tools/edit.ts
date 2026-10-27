@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import type { Tool } from "../agent/loop.js";
 import { type Confirm, toDecision } from "./confirm.js";
 import { formatDiff } from "./diff.js";
+import { applyHunks, computeHunks, formatHunk, type Hunk } from "./hunks.js";
 import { displayPath, isOutsidePath, resolvePath } from "./path.js";
 
 export type Edit = {
@@ -234,6 +235,7 @@ function formatResult(
   path: string,
   text: string,
   changed: ChangedRange[],
+  header?: string,
 ): string {
   const { lines, starts } = analyzeLines(text);
   const expanded = changed
@@ -260,7 +262,7 @@ function formatResult(
     }
   }
 
-  const out = [`Edited ${path}: ${changed.length} replacement(s).`];
+  const out = [header ?? `Edited ${path}: ${changed.length} replacement(s).`];
   let count = 0;
   for (const hunk of hunks) {
     if (hunks[0] !== hunk) {
@@ -303,7 +305,48 @@ function declined(message: string, reason: string | undefined): string {
   return text === "" ? message : `${message}\nReason from the user: ${text}`;
 }
 
-export function createEditTool(cwd: string, confirm: Confirm): Tool {
+function acceptedRanges(
+  written: string,
+  hunks: Hunk[],
+  accepted: boolean[],
+): ChangedRange[] {
+  const { lines, starts } = analyzeLines(written);
+  const ranges: ChangedRange[] = [];
+  let delta = 0;
+
+  for (let index = 0; index < hunks.length; index += 1) {
+    const hunk = hunks[index];
+    if (hunk === undefined || accepted[index] !== true) {
+      continue;
+    }
+    const changeStart = hunk.beforeStart - 1 + hunk.before.length + delta;
+    if (hunk.added.length === 0) {
+      const at = starts[Math.min(changeStart, lines.length)] ?? written.length;
+      ranges.push({ start: at, end: at });
+    } else {
+      const first = Math.min(changeStart, Math.max(0, lines.length - 1));
+      const last = Math.min(
+        changeStart + hunk.added.length - 1,
+        Math.max(0, lines.length - 1),
+      );
+      const start = starts[first] ?? written.length;
+      const end =
+        last < lines.length
+          ? (starts[last] ?? 0) + (lines[last]?.length ?? 0)
+          : written.length;
+      ranges.push({ start, end });
+    }
+    delta += hunk.added.length - hunk.removed.length;
+  }
+
+  return ranges;
+}
+
+export function createEditTool(
+  cwd: string,
+  confirm: Confirm,
+  beforeWrite?: (absPath: string) => void,
+): Tool {
   return {
     name: "edit",
     description:
@@ -369,12 +412,18 @@ export function createEditTool(cwd: string, confirm: Confirm): Tool {
       const normalized = crlf ? original.replace(/\r\n/g, "\n") : original;
       const { text: updated, changed } = applyEdits(normalized, edits);
 
+      const hunks = computeHunks(normalized, updated);
+      const shownHunks = hunks.map((hunk, index) =>
+        formatHunk(path, hunk, index, hunks.length),
+      );
+
       signal?.throwIfAborted();
       const decision = toDecision(
         await confirm({
           tool: "edit",
           title: `${path} を編集します`,
           detail: formatDiff(path, normalized, updated),
+          ...(shownHunks.length === 0 ? {} : { hunks: shownHunks }),
           ...(isOutsidePath(cwd, abs) ? { outside: true } : {}),
         }),
       );
@@ -385,10 +434,44 @@ export function createEditTool(cwd: string, confirm: Confirm): Tool {
         );
       }
 
+      let content = updated;
+      let resultChanged = changed;
+      let header: string | undefined;
+      const acceptedHunks = decision.acceptedHunks;
+      if (acceptedHunks !== undefined && hunks.length > 0) {
+        const accepted = hunks.map((_, index) => acceptedHunks[index] === true);
+        const acceptedCount = accepted.filter(Boolean).length;
+        if (acceptedCount === 0) {
+          return declined(
+            "The user declined this edit. Ask what they want instead.",
+            decision.reason,
+          );
+        }
+        if (acceptedCount === hunks.length) {
+          content = updated;
+        } else {
+          content = applyHunks(normalized, hunks, accepted);
+          resultChanged = acceptedRanges(content, hunks, accepted);
+          const rejected = hunks
+            .map((hunk, index) =>
+              accepted[index] === true
+                ? undefined
+                : `hunk ${index + 1} (around line ${hunk.beforeStart})`,
+            )
+            .filter((value): value is string => value !== undefined);
+          header = `Edited ${path}: applied ${acceptedCount} of ${hunks.length} hunks; the user rejected ${rejected.join(", ")}.`;
+          const reason = decision.reason?.trim() ?? "";
+          if (reason !== "") {
+            header = `${header}\nReason from the user: ${reason}`;
+          }
+        }
+      }
+
       signal?.throwIfAborted();
-      const output = crlf ? updated.replace(/\n/g, "\r\n") : updated;
+      beforeWrite?.(abs);
+      const output = crlf ? content.replace(/\n/g, "\r\n") : content;
       writeFileSync(abs, output, "utf8");
-      return formatResult(path, updated, changed);
+      return formatResult(path, content, resultChanged, header);
     },
   };
 }

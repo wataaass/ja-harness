@@ -26,7 +26,11 @@ function declined(message: string, reason: string | undefined): string {
   return text === "" ? message : `${message}\nReason from the user: ${text}`;
 }
 
-export function createWriteTool(cwd: string, confirm: Confirm): Tool {
+export function createWriteTool(
+  cwd: string,
+  confirm: Confirm,
+  beforeWrite?: (absPath: string) => void,
+): Tool {
   return {
     name: "write",
     description: "Create a new file. Fails if the file already exists.",
@@ -86,6 +90,7 @@ export function createWriteTool(cwd: string, confirm: Confirm): Tool {
       }
 
       signal?.throwIfAborted();
+      beforeWrite?.(abs);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, args.content, "utf8");
       return `Created ${path} (${lines.length} lines).`;
