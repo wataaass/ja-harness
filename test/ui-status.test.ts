@@ -23,7 +23,7 @@ function status(overrides: Record<string, unknown> = {}) {
 describe("renderStatus", () => {
   it("モード・権限・モデル・Context・料金・メーターを並べる", () => {
     expect(status()).toBe(
-      " Agent  Confirm  deepseek-v4.1-flash（high）  Context 12%  0.003ドル ▰▰▰▰▱ 87%",
+      " Agent  Confirm  deepseek-v4.1-flash（high）  Context 12%  $0.003 ▰▰▰▰▱ 87%",
     );
   });
 
@@ -34,7 +34,7 @@ describe("renderStatus", () => {
   });
 
   it("待ちがあれば件数を足す", () => {
-    expect(status({ queued: 1 })).toContain("Confirm  待ち 1件  deepseek");
+    expect(status({ queued: 1 })).toContain("Confirm  Queued 1  deepseek");
   });
 
   it("幅が足りなければモデル名を先に省く", () => {
@@ -60,7 +60,7 @@ describe("renderStatus", () => {
   });
 
   it("小さい料金も有効数字2桁程度で出す", () => {
-    expect(status({ cost: 0.0004 })).toContain("0.0004ドル");
+    expect(status({ cost: 0.0004 })).toContain("$0.0004");
   });
 
   it("モードだけ差し色にする", () => {

@@ -181,9 +181,9 @@ async function main(): Promise<number> {
           const firstLine = event.result.split(/\r?\n/)[0] ?? "";
           process.stderr.write(`  ✗ ${firstLine.slice(0, 80)}\n`);
         } else if (event.type === "context") {
-          const label = event.action === "prune" ? "切り詰め" : "要約";
+          const action = event.action === "prune" ? "pruned" : "summarized";
           process.stderr.write(
-            `（Context: ${label} ${event.savedTokens} トークン減）\n`,
+            ` (Context: ${action} -${event.savedTokens} tokens)\n`,
           );
         }
       },

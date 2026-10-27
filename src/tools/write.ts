@@ -70,14 +70,14 @@ export function createWriteTool(
       const shown = lines.slice(0, DETAIL_LINES);
       let detail = shown.join("\n");
       if (lines.length > DETAIL_LINES) {
-        detail += `\n…ほか${lines.length - DETAIL_LINES}行`;
+        detail += `\n…${lines.length - DETAIL_LINES} more lines`;
       }
 
       signal?.throwIfAborted();
       const decision = toDecision(
         await confirm({
           tool: "write",
-          title: `${path} を作ります（${lines.length}行）`,
+          title: `Write ${path} (${lines.length} lines)`,
           detail,
           ...(isOutsidePath(cwd, abs) ? { outside: true } : {}),
         }),

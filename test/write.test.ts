@@ -22,7 +22,7 @@ describe("write", () => {
     expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("one\ntwo\n");
     expect(confirm).toHaveBeenCalledWith({
       tool: "write",
-      title: "a.txt を作ります（2行）",
+      title: "Write a.txt (2 lines)",
       detail: "one\ntwo",
     });
   });
@@ -73,10 +73,10 @@ describe("write", () => {
     await createWriteTool(cwd, confirm).execute({ path: "a.txt", content });
 
     const request = confirm.mock.calls[0]?.[0];
-    expect(request?.title).toBe("a.txt を作ります（45行）");
+    expect(request?.title).toBe("Write a.txt (45 lines)");
     expect(request?.detail).toContain("l40");
     expect(request?.detail).not.toContain("l41");
-    expect(request?.detail).toContain("…ほか5行");
+    expect(request?.detail).toContain("…5 more lines");
   });
 });
 

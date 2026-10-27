@@ -24,7 +24,7 @@ describe("summarizeEnd", () => {
   it("read は結果の行数", () => {
     expect(
       summarizeEnd("read", "== src/a.ts (lines 1-20 of 120)\n1\ta", false),
-    ).toBe("（120行）");
+    ).toBe("(120 lines)");
   });
 
   it("grep は一致の行数", () => {
@@ -33,23 +33,23 @@ describe("summarizeEnd", () => {
       "src/a.ts-2-context",
       "src/b.ts:9:AppError",
     ].join("\n");
-    expect(summarizeEnd("grep", result, false)).toBe("2件");
-    expect(summarizeEnd("grep", "No matches.", false)).toBe("0件");
+    expect(summarizeEnd("grep", result, false)).toBe("2 matches");
+    expect(summarizeEnd("grep", "No matches.", false)).toBe("0 matches");
   });
 
   it("shell は終了コード", () => {
-    expect(summarizeEnd("shell", "ok\n[exit code 0]", false)).toBe("終了 0");
+    expect(summarizeEnd("shell", "ok\n[exit code 0]", false)).toBe("exit 0");
   });
 
   it("edit は置換の数", () => {
     expect(summarizeEnd("edit", "Edited a.ts: 3 replacement(s).", false)).toBe(
-      "3 か所",
+      "3 replaced",
     );
   });
 
   it("write は行数", () => {
     expect(summarizeEnd("write", "Created a.ts (45 lines).", false)).toBe(
-      "45行",
+      "45 lines",
     );
   });
 
@@ -60,28 +60,28 @@ describe("summarizeEnd", () => {
         "The user declined this edit. Ask what they want instead.",
         false,
       ),
-    ).toBe("却下");
+    ).toBe("Rejected");
     expect(
       summarizeEnd(
         "write",
         "The user declined this write. Ask what they want instead.",
         false,
       ),
-    ).toBe("却下");
+    ).toBe("Rejected");
     expect(
       summarizeEnd(
         "shell",
         "The user declined this command. Ask what they want instead.",
         false,
       ),
-    ).toBe("却下");
+    ).toBe("Rejected");
     expect(
       summarizeEnd(
         "edit",
         "Edited a.ts: applied 2 of 3 hunks; the user rejected hunk 3.",
         false,
       ),
-    ).toBe("一部（2/3）");
+    ).toBe("Partial (2/3)");
   });
 
   it("失敗なら結果の1行目の先頭50字", () => {

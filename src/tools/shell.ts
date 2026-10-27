@@ -205,7 +205,7 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
       const decision = toDecision(
         await confirm({
           tool: "shell",
-          title: `コマンドを実行します: ${shown}`,
+          title: `Run: ${shown}`,
           detail,
         }),
       );

@@ -30,7 +30,7 @@ describe("renderGreeting", () => {
       width: 80,
     });
     expect(lines).toHaveLength(2);
-    expect(lines[1]).toBe(" /help で使い方");
+    expect(lines[1]).toBe(" /help for help");
   });
 
   it("前回の料金とキャッシュを2行目に出す", () => {
@@ -44,9 +44,7 @@ describe("renderGreeting", () => {
       theme: plain,
       width: 80,
     });
-    expect(lines[1]).toBe(
-      " 前回のセッション 0.012ドル・キャッシュ 91%   /help で使い方",
-    );
+    expect(lines[1]).toBe(" Last session $0.012 · cache 91%   /help for help");
   });
 
   it("home と同じ場所なら ~ にする", () => {

@@ -7,21 +7,21 @@ import {
 
 describe("formatCost", () => {
   it("小さい料金は有効数字2桁程度で出す", () => {
-    expect(formatCost(0.0004)).toBe("0.0004ドル");
-    expect(formatCost(0.012)).toBe("0.012ドル");
-    expect(formatCost(0.003)).toBe("0.003ドル");
-    expect(formatCost(0.000412)).toBe("0.00041ドル");
+    expect(formatCost(0.0004)).toBe("$0.0004");
+    expect(formatCost(0.012)).toBe("$0.012");
+    expect(formatCost(0.003)).toBe("$0.003");
+    expect(formatCost(0.000412)).toBe("$0.00041");
   });
 
   it("1以上は短く出す", () => {
-    expect(formatCost(1.2)).toBe("1.2ドル");
-    expect(formatCost(1)).toBe("1ドル");
-    expect(formatCost(12.345)).toBe("12ドル");
-    expect(formatCost(123.4)).toBe("123ドル");
+    expect(formatCost(1.2)).toBe("$1.2");
+    expect(formatCost(1)).toBe("$1");
+    expect(formatCost(12.345)).toBe("$12");
+    expect(formatCost(123.4)).toBe("$123");
   });
 
   it("0はそのまま", () => {
-    expect(formatCost(0)).toBe("0ドル");
+    expect(formatCost(0)).toBe("$0");
   });
 });
 
@@ -47,6 +47,6 @@ describe("formatTurnSummary", () => {
   it("トークン・料金・キャッシュを1行にする", () => {
     expect(
       formatTurnSummary({ tokens: 4100, cost: 0.0004, cacheRatio: 0.87 }),
-    ).toBe("今回 4.1k トークン・0.0004ドル・キャッシュ 87%");
+    ).toBe("4.1k tokens · $0.0004 · cache 87%");
   });
 });

@@ -20,7 +20,7 @@ function run(
   const confirm = createTerminalConfirm({ input, output, isTTY });
   const promise = confirm({
     tool: "edit",
-    title: "a.ts を編集します",
+    title: "Edit a.ts",
     detail: "- old\n+ new",
   });
   input.end(answer);
@@ -52,7 +52,7 @@ describe("createTerminalConfirm", () => {
 
     expect(accepted).toBe(true);
     expect(written).toContain("- old\n+ new\n");
-    expect(written).toContain("a.ts を編集します\n実行しますか？ [y/N] ");
+    expect(written).toContain("Edit a.ts\n実行しますか？ [y/N] ");
   });
 
   it("n なら実行しない", async () => {
@@ -74,7 +74,7 @@ describe("createTerminalConfirm", () => {
     const { accepted, written } = await run("y\n", false);
 
     expect(accepted).toBe(false);
-    expect(written).toBe("（確認できないため断りました: a.ts を編集します）\n");
+    expect(written).toBe("（確認できないため断りました: Edit a.ts）\n");
   });
 });
 
@@ -116,7 +116,7 @@ describe("createTerminalConfirm の Ctrl+C", () => {
 
     const pending = confirm({
       tool: "edit",
-      title: "a.ts を編集します",
+      title: "Edit a.ts",
       detail: "",
     });
     input.write("\x03");

@@ -623,8 +623,8 @@ export async function runApp(o: AppOptions): Promise<number> {
   }
 
   function editPath(title: string): string {
-    const suffix = messages.app.editPathSuffix;
-    return title.endsWith(suffix) ? title.slice(0, -suffix.length) : title;
+    const prefix = messages.app.editPathPrefix;
+    return title.startsWith(prefix) ? title.slice(prefix.length) : title;
   }
 
   function reviewDiff(file: CheckpointFile): string[] {

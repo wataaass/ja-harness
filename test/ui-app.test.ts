@@ -214,7 +214,7 @@ async function close(
   result: Promise<number>,
 ) {
   input.send("\x04");
-  await waitFor(output, "もう一度 Ctrl+D で終了");
+  await waitFor(output, "Press Ctrl+D again to exit");
   input.send("\x04");
   return result;
 }
@@ -260,14 +260,14 @@ describe("runApp", () => {
 
     input.send("src/app.ts を直して\r");
     await waitFor(output, "直しました。");
-    await waitFor(output, "今回");
+    await waitFor(output, "cache");
 
     expect(await close(input, output, result)).toBe(0);
     const text = stripAnsi(output.text);
     expect(text).toContain("› src/app.ts を直して");
-    expect(text).toContain("読  src/app.ts（120行）");
+    expect(text).toContain("Read  src/app.ts (120 lines)");
     expect(text).toContain("直しました。");
-    expect(text).toContain("今回 30 トークン");
+    expect(text).toContain("30 tokens");
   });
 
   it("UTF-8の3バイトの文字が2つの塊で届いても文字化けしない", async () => {
@@ -334,7 +334,7 @@ describe("runApp", () => {
     });
 
     input.send("run\r");
-    await waitFor(output, "Enter 許可");
+    await waitFor(output, "Enter allow");
     input.send("\r");
     await waitFor(output, "done");
     expect(await close(input, output, result)).toBe(0);
@@ -353,7 +353,7 @@ describe("runApp", () => {
     });
 
     input.send("run\r");
-    await waitFor(output, "Enter 許可");
+    await waitFor(output, "Enter allow");
     input.send("\x1b");
     await waitFor(output, "done");
     expect(await close(input, output, result)).toBe(0);
@@ -372,7 +372,7 @@ describe("runApp", () => {
     });
 
     input.send("run\r");
-    await waitFor(output, "Enter 許可");
+    await waitFor(output, "Enter allow");
     input.send("a");
     await waitFor(output, "done");
     expect(await close(input, output, result)).toBe(0);
@@ -391,9 +391,9 @@ describe("runApp", () => {
     });
 
     input.send("run\r");
-    await waitFor(output, "Enter 許可");
+    await waitFor(output, "Enter allow");
     input.send("e");
-    await waitFor(output, "却下の理由");
+    await waitFor(output, "Why reject");
     input.send("違います\r");
     await waitFor(output, "done");
     expect(await close(input, output, result)).toBe(0);
@@ -412,7 +412,7 @@ describe("runApp", () => {
     });
 
     input.send("run\r");
-    await waitFor(output, "Enter 許可");
+    await waitFor(output, "Enter allow");
     input.send("\x04");
     await waitFor(output, "done");
 
@@ -442,11 +442,11 @@ describe("runApp", () => {
     });
 
     input.send("start\r");
-    await waitFor(output, "考えています");
+    await waitFor(output, "Thinking");
     input.send("追加の指示\r");
-    await waitFor(output, "待ち 1件");
+    await waitFor(output, "Queued 1");
     release?.();
-    await waitFor(output, "作業中に送信");
+    await waitFor(output, "sent while working");
     await waitFor(output, "受け取りました");
 
     expect(await close(input, output, result)).toBe(0);
@@ -476,10 +476,10 @@ describe("runApp", () => {
     });
 
     input.send("start\r");
-    await waitFor(output, "考えています");
+    await waitFor(output, "Thinking");
     input.send("追加1\r");
     input.send("追加2\r");
-    await waitFor(output, "待ち 2件");
+    await waitFor(output, "Queued 2");
     input.send("\x1b[A");
     await waitFor(output, "│ › 追加2");
     release?.();
@@ -509,9 +509,9 @@ describe("runApp", () => {
     const { input, output, result } = start({ complete });
 
     input.send("start\r");
-    await waitFor(output, "考えています");
+    await waitFor(output, "Thinking");
     input.send("\x1b");
-    await waitFor(output, "止めました");
+    await waitFor(output, "Stopped");
 
     expect(await close(input, output, result)).toBe(0);
   });
@@ -521,7 +521,7 @@ describe("runApp", () => {
     const { input, output, result } = start({ complete });
 
     input.send("\x04");
-    await waitFor(output, "もう一度 Ctrl+D で終了");
+    await waitFor(output, "Press Ctrl+D again to exit");
     input.send("\x04");
 
     expect(await result).toBe(0);
@@ -533,7 +533,7 @@ describe("runApp", () => {
     const { input, output, result } = start({ complete });
 
     input.send("\x04");
-    await waitFor(output, "もう一度 Ctrl+D で終了");
+    await waitFor(output, "Press Ctrl+D again to exit");
     input.send("\x04");
 
     expect(await result).toBe(0);
@@ -670,9 +670,9 @@ describe("runApp の追加機能", () => {
       input.send("\x1b[Z");
       await waitFor(output, "Plan");
       input.send("plan please\r");
-      await waitFor(output, "承認して実行");
+      await waitFor(output, "approve & run");
       input.send("e");
-      await waitFor(output, "直す理由");
+      await waitFor(output, "What to change");
       input.send("もっと詳しく\r");
       await waitFor(output, "直します");
 
@@ -698,7 +698,7 @@ describe("runApp の追加機能", () => {
       input.send("\x1b[Z");
       await waitFor(output, "Plan");
       input.send("plan please\r");
-      await waitFor(output, "却下");
+      await waitFor(output, "reject");
       input.send("\x1b");
       await waitFor(output, "わかりました");
 
@@ -745,7 +745,7 @@ describe("runApp の追加機能", () => {
     input.send("/permission Auto-edit\r");
     await waitFor(output, "Auto-edit");
     input.send("go\r");
-    await waitFor(output, "Enter 許可");
+    await waitFor(output, "Enter allow");
     input.send("\r");
     await waitFor(output, "done");
 
@@ -786,7 +786,7 @@ describe("runApp の追加機能", () => {
     input.send("/permission Auto-edit\r");
     await waitFor(output, "Auto-edit");
     input.send("go\r");
-    await waitFor(output, "Enter 許可");
+    await waitFor(output, "Enter allow");
     input.send("\r");
     await waitFor(output, "done");
 
@@ -836,7 +836,7 @@ describe("runApp の追加機能", () => {
 
     expect(await close(input, output, result)).toBe(0);
     expect(seen).toEqual([true]);
-    expect(stripAnsi(output.text)).not.toContain("Enter 許可");
+    expect(stripAnsi(output.text)).not.toContain("Enter allow");
   });
 
   it("/ の候補を Tab で入れて Enter で実行する", async () => {
@@ -849,7 +849,7 @@ describe("runApp の追加機能", () => {
     input.send("\t");
     await waitFor(output, "› /mode");
     input.send("\r");
-    await waitFor(output, "Enter 決める");
+    await waitFor(output, "Enter select");
 
     input.send("\x1b");
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -861,7 +861,7 @@ describe("runApp の追加機能", () => {
     const { input, output, result } = start({ complete });
 
     input.send("/nope\r");
-    await waitFor(output, "知らないコマンドです: /nope");
+    await waitFor(output, "Unknown command: /nope");
     expect(await close(input, output, result)).toBe(0);
   });
 
@@ -982,7 +982,7 @@ describe("runApp の追加機能", () => {
     });
 
     input.send("/details\r");
-    await waitFor(output, "途中経過: 詳しく");
+    await waitFor(output, "Details: verbose");
     input.send("go\r");
     await waitFor(output, "1\tconst a = 1;");
 
@@ -1028,9 +1028,9 @@ describe("runApp の追加機能", () => {
     });
 
     input.send("start\r");
-    await waitFor(output, "考えています");
+    await waitFor(output, "Thinking");
     input.send("\x1b");
-    await waitFor(output, "止めました");
+    await waitFor(output, "Stopped");
     input.send("again\r");
     await waitFor(output, "again ok");
 
@@ -1061,7 +1061,7 @@ function hunkTool(
       execute: async () => {
         const decision = await confirm({
           tool: "edit",
-          title: "a.ts を編集します",
+          title: "Edit a.ts",
           detail: "",
           hunks,
         });
@@ -1112,6 +1112,25 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
     }
   });
 
+  it("差分のカードの題はパスだけで Edit を付けない", async () => {
+    const seen: Decision[] = [];
+    const { complete } = sequence([call("edit", {}), answer("done")]);
+    const { input, output, result } = start({
+      complete,
+      createTools: hunkTool(seen, TWO_HUNKS),
+    });
+
+    input.send("go\r");
+    await waitFor(output, "Diff  a.ts  1/2");
+    const text = stripAnsi(output.text);
+    expect(text).toContain("Diff  a.ts  1/2");
+    expect(text).not.toContain("Diff  Edit");
+
+    input.send("a");
+    await waitFor(output, "done");
+    expect(await close(input, output, result)).toBe(0);
+  });
+
   it("a で残りを全部採用する", async () => {
     const seen: Decision[] = [];
     const { complete } = sequence([call("edit", {}), answer("done")]);
@@ -1142,7 +1161,7 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
     input.send("\r");
     await waitFor(output, "Diff  a.ts  2/2");
     input.send("e");
-    await waitFor(output, "却下の理由");
+    await waitFor(output, "Why reject");
     input.send("まだ早い\r");
     await waitFor(output, "done");
 
@@ -1179,14 +1198,14 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
       await waitFor(output, "Auto-edit");
       input.send("go\r");
       await waitFor(output, "done");
-      await waitFor(output, "今回");
+      await waitFor(output, "cache");
 
       input.send("\x12");
       await waitFor(output, "Review  a.txt  1/2");
       input.send("\x1b[C");
       await waitFor(output, "Review  b.txt  2/2");
       input.send("i");
-      await waitFor(output, "追加の指示");
+      await waitFor(output, "More instructions");
       input.send("もっと\r");
       await waitFor(output, "了解");
 
@@ -1218,10 +1237,10 @@ describe("runApp のまとまりごとの確認と取り消し", () => {
       await waitFor(output, "Auto-edit");
       input.send("go\r");
       await waitFor(output, "done");
-      await waitFor(output, "今回");
+      await waitFor(output, "cache");
 
       input.send("/undo\r");
-      await waitFor(output, "戻しました: a.txt（1件）");
+      await waitFor(output, "Restored: a.txt (1)");
       await waitFor(output, "シェルで変えたファイルは戻りません");
       expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("old\n");
 
@@ -1284,7 +1303,7 @@ describe("runApp のセッション", () => {
 
       input.send("hi\r");
       await waitFor(output, "ok");
-      await waitFor(output, "今回");
+      await waitFor(output, "cache");
       expect(await close(input, output, result)).toBe(0);
 
       const sessions = listSessions(sessionDir(home), cwd);
@@ -1313,7 +1332,7 @@ describe("runApp のセッション", () => {
 
       input.send("hi\r");
       await waitFor(output, "ok");
-      await waitFor(output, "今回");
+      await waitFor(output, "cache");
       input.send("/clear\r");
       await waitFor(output, "会話を空にしました");
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1350,7 +1369,7 @@ describe("runApp のセッション", () => {
       const { input, output, result } = start({ complete, home, cwd });
 
       input.send("/resume\r");
-      await waitFor(output, "前のセッション");
+      await waitFor(output, "Sessions");
       input.send("\r");
       await waitFor(output, "続きから始めます（1件のやりとり）");
       input.send("next\r");
@@ -1419,7 +1438,7 @@ describe("runApp のセッション", () => {
       const { complete } = sequence([]);
       const { input, output, result } = start({ complete, home, cwd });
 
-      await waitFor(output, "前回のセッション 0.012ドル・キャッシュ 50%");
+      await waitFor(output, "Last session $0.012 · cache 50%");
       expect(await close(input, output, result)).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -1441,12 +1460,12 @@ describe("runApp のセッション", () => {
 
       input.send("one\r");
       await waitFor(output, "一");
-      await waitFor(output, "今回");
+      await waitFor(output, "cache");
       input.send("two\r");
       await waitFor(output, "二");
-      await waitFor(output, "今回");
+      await waitFor(output, "cache");
       input.send("/compact\r");
-      await waitFor(output, "要約しました");
+      await waitFor(output, "Compacted");
 
       expect(await close(input, output, result)).toBe(0);
       expect(
@@ -1469,14 +1488,14 @@ describe("runApp のセッション", () => {
 
       input.send("hi\r");
       await waitFor(output, "ok");
-      await waitFor(output, "今回");
+      await waitFor(output, "cache");
       input.send("/context\r");
       await waitFor(output, "Context");
       await waitFor(output, "System prompt");
       await waitFor(output, "Tools");
       await waitFor(output, "Tool results");
-      await waitFor(output, "切り詰め・要約で減らした分");
-      await waitFor(output, "キャッシュに当たった入力");
+      await waitFor(output, "Saved by pruning/summary");
+      await waitFor(output, "Cached input");
       input.send("\r");
 
       expect(await close(input, output, result)).toBe(0);
@@ -1494,8 +1513,8 @@ describe("runApp のセッション", () => {
       const { input, output, result } = start({ complete, home, cwd });
 
       input.send("/model\r");
-      await waitFor(output, "単価は $/100万トークン");
-      await waitFor(output, "入0.15 キ0.003 出0.6");
+      await waitFor(output, "$ per 1M tokens");
+      await waitFor(output, "in 0.15  cache 0.003  out 0.6");
       input.send("\x1b");
       await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -1578,7 +1597,7 @@ describe("runApp の設定ファイル", () => {
 
       await waitFor(output, "Auto-edit");
       input.send("go\r");
-      await waitFor(output, "Enter 許可");
+      await waitFor(output, "Enter allow");
       input.send("\r");
       await waitFor(output, "done");
 

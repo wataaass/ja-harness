@@ -81,7 +81,7 @@ describe("shell", () => {
     expect(result).toBe("hi\n[exit code 0]");
     expect(confirm).toHaveBeenCalledWith({
       tool: "shell",
-      title: "コマンドを実行します: echo hi",
+      title: "Run: echo hi",
       detail: "",
     });
   });
@@ -95,7 +95,7 @@ describe("shell", () => {
 
     expect(confirm).toHaveBeenCalledWith({
       tool: "shell",
-      title: `コマンドを実行します: ${command.slice(0, 80)}`,
+      title: `Run: ${command.slice(0, 80)}`,
       detail: command,
     });
   });
@@ -109,7 +109,7 @@ describe("shell", () => {
 
     expect(confirm).toHaveBeenCalledWith({
       tool: "shell",
-      title: "コマンドを実行します: echo a",
+      title: "Run: echo a",
       detail: command,
     });
   });

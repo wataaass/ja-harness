@@ -114,7 +114,7 @@ describe("edit tool", () => {
     expect(result).toContain("2\tB");
     expect(confirm).toHaveBeenCalledWith({
       tool: "edit",
-      title: "a.txt を編集します",
+      title: "Edit a.txt",
       detail: ["@@ line 1 @@", " a", "-b", "+B"].join("\n"),
       hunks: [["@@ line 1 @@", " a", "-b", "+B"]],
     });

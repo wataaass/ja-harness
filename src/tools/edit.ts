@@ -421,7 +421,7 @@ export function createEditTool(
       const decision = toDecision(
         await confirm({
           tool: "edit",
-          title: `${path} を編集します`,
+          title: `Edit ${path}`,
           detail: formatDiff(path, normalized, updated),
           ...(shownHunks.length === 0 ? {} : { hunks: shownHunks }),
           ...(isOutsidePath(cwd, abs) ? { outside: true } : {}),

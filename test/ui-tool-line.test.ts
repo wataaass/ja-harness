@@ -7,18 +7,18 @@ const plain = createTheme({ env: {}, isTTY: false });
 
 describe("toolMark", () => {
   it("道具ごとの日本語1文字を返す", () => {
-    expect(toolMark("read")).toBe("読");
-    expect(toolMark("list")).toBe("覧");
-    expect(toolMark("grep")).toBe("探");
-    expect(toolMark("edit")).toBe("編");
-    expect(toolMark("write")).toBe("作");
-    expect(toolMark("shell")).toBe("実");
-    expect(toolMark("plan")).toBe("計");
-    expect(toolMark("ask")).toBe("問");
+    expect(toolMark("read")).toBe("Read");
+    expect(toolMark("list")).toBe("List");
+    expect(toolMark("grep")).toBe("Grep");
+    expect(toolMark("edit")).toBe("Edit");
+    expect(toolMark("write")).toBe("Write");
+    expect(toolMark("shell")).toBe("Shell");
+    expect(toolMark("plan")).toBe("Plan");
+    expect(toolMark("ask")).toBe("Ask");
   });
 
   it("知らない道具は・", () => {
-    expect(toolMark("other")).toBe("・");
+    expect(toolMark("other")).toBe("Tool");
   });
 });
 
@@ -31,7 +31,7 @@ describe("formatToolLine", () => {
         theme: plain,
         width: 80,
       }),
-    ).toBe(" 読  src/app.ts（120行）");
+    ).toBe(" Read  src/app.ts（120行）");
   });
 
   it("detail を後ろに薄く付ける", () => {
@@ -43,7 +43,7 @@ describe("formatToolLine", () => {
         theme: plain,
         width: 80,
       }),
-    ).toBe(' 探  "AppError" 3件  0.2秒');
+    ).toBe(' Grep  "AppError" 3件  0.2秒');
   });
 
   it("失敗なら ✕ を付けて失敗の色にする", () => {
@@ -55,7 +55,7 @@ describe("formatToolLine", () => {
       theme,
       width: 80,
     });
-    expect(stripAnsi(line)).toBe(" ✕読  src/app.ts");
+    expect(stripAnsi(line)).toBe(" ✕Read  src/app.ts");
     expect(line).toContain("\u001B[38;2;201;51;58m");
   });
 
