@@ -19,9 +19,10 @@
   - `docs/research/reports/ハーネスのトークン削減技術.md`: 調査レポート（メモは `docs/research/research_notes/`）
 
 - 2026-10-27（夜）: 本人が Windows（Windows Terminal・PowerShell）で起動して試した。日本語入力の Enter と色は良い、Shift+Enter は効かず Ctrl+J は効いた。これを受けて PR #6 に、`ui.enter`（`newline` で Enter 改行・空の行で Enter 送信）、短い表示と道具の印の英語化、権限名の英語化（Confirm・Auto-edit・Auto）、シェルの確認に目的を出す（`description`）、Windows では PowerShell で動かす、を足した。テスト495件
+- 2026-10-27（夜、続き）: PR #6 に、/model を単価だけに、`/` の一覧をコマンド名だけに、シェルの目的の1行を英語に、決まりのファイル（AGENTS.md・CLAUDE.md・JA_HARNESS.md）、スキル（読み込み・`skill` の道具・`/skills` の切り替え・`/skills add`・`/<名前>`・標準の skill-creator）、Windows でホームのフォルダを `os.homedir()` で探す修正、を足した。テスト533件
 
 ## 次にやること
-1. 本人が Windows で、PowerShell で動くシェル・確認のカードの目的・英語の表示を確かめる（Windows での実行はまだ一度も確かめていない）。起動は `cd $HOME\jh-test` のあと `node $HOME\ja-harness\dist\index.js`
+1. 本人が Windows で、PowerShell で動くシェル・確認のカードの目的・英語の表示・決まりのファイル・スキルを確かめる（Windows での実行はまだ一度も確かめていない）。起動は `cd $HOME\jh-test` のあと `node $HOME\ja-harness\dist\index.js`
 2. Windows Terminal で Shift+Enter が効かない原因を調べる（Node が Windows でキーを受け取る仕組みで Shift が落ちている可能性）
 3. 道具の結果の上限（2,000・8,000）を価格から決める（キャッシュの割引が小さいモデルでは、上限を上げて読み直しを減らすほうが安い可能性）。決める前に本人に確認する
 4. bench の課題をもう少し難しくする（DeepSeek は3条件とも9割以上通る）
