@@ -6,6 +6,7 @@ import {
 import { gradeExternal, prepareExternal } from "./external.js";
 import { rerunErrors } from "./rerun.js";
 import { runBench, validateTasks } from "./run.js";
+import { type ContextOverride, runSimulation } from "./sim/run.js";
 
 const BENCH_HELP = `使い方: ja-harness bench [オプション]
 
@@ -22,6 +23,11 @@ const BENCH_HELP = `使い方: ja-harness bench [オプション]
   --rerun-errors FILE   結果の JSON の中で実行失敗だけをやり直す
   --prepare NAME        他のハーネス用に作業場所を作る
   --grade NAME          他のハーネスの結果を採点する
+  --sim                 API を呼ばずに文脈管理の料金を測る
+  --models a,b          --sim で使うモデル
+  --scenarios a,b       --sim で使う台本（short,medium,long,read-heavy）
+  --context JSON        --sim の文脈管理の設定を深く上書きする
+  --cache-ttl N         --sim のキャッシュの寿命（秒、既定3600）
   -h, --help            この使い方
 `;
 
@@ -36,6 +42,11 @@ export type BenchArgs = {
   rerunErrors?: string;
   prepare?: string;
   grade?: string;
+  sim?: boolean;
+  models?: string[];
+  scenarios?: string[];
+  context?: ContextOverride;
+  cacheTtl?: number;
   help: boolean;
 };
 
@@ -56,6 +67,28 @@ function positive(value: string, option: string): number {
     throw new Error(`${option} は正の整数です`);
   }
   return number;
+}
+
+function nonNegative(value: string, option: string): number {
+  const number = Number(value);
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${option} は0以上の整数です`);
+  }
+  return number;
+}
+
+function contextJson(value: string): ContextOverride {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`--context の JSON が壊れています: ${detail}`);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--context には JSON のオブジェクトを渡します");
+  }
+  return parsed as ContextOverride;
 }
 
 function optionValue(
@@ -86,6 +119,24 @@ export function parseBenchArgs(args: string[]): BenchArgs {
       parsed.help = true;
     } else if (arg === "--validate") {
       parsed.validate = true;
+    } else if (arg === "--sim") {
+      parsed.sim = true;
+    } else if (arg === "--models") {
+      const item = optionValue(args, index, arg);
+      parsed.models = words(item.value, arg);
+      index = item.next;
+    } else if (arg === "--scenarios") {
+      const item = optionValue(args, index, arg);
+      parsed.scenarios = words(item.value, arg);
+      index = item.next;
+    } else if (arg === "--context") {
+      const item = optionValue(args, index, arg);
+      parsed.context = contextJson(item.value);
+      index = item.next;
+    } else if (arg === "--cache-ttl") {
+      const item = optionValue(args, index, arg);
+      parsed.cacheTtl = nonNegative(item.value, arg);
+      index = item.next;
     } else if (arg === "--rerun-errors") {
       const item = optionValue(args, index, arg);
       parsed.rerunErrors = item.value;
@@ -178,6 +229,22 @@ export async function runBenchCli(
   }
 
   try {
+    if (options.sim === true) {
+      const result = await runSimulation({
+        ...(options.models === undefined ? {} : { models: options.models }),
+        conditions: options.conditions,
+        ...(options.scenarios === undefined
+          ? {}
+          : { scenarios: options.scenarios }),
+        ...(options.context === undefined ? {} : { context: options.context }),
+        ...(options.cacheTtl === undefined
+          ? {}
+          : { cacheTtlSeconds: options.cacheTtl }),
+      });
+      process.stdout.write(`${result.table}\n結果: ${result.resultsPath}\n`);
+      return 0;
+    }
+
     if (options.rerunErrors !== undefined) {
       const result = await rerunErrors({
         resultsPath: options.rerunErrors,

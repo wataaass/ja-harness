@@ -47,6 +47,7 @@ export function createContextManager(o: {
   config: ContextConfig;
   complete: Complete;
   estimate: Estimator;
+  now?: () => number;
 }): {
   beforeStep(
     messages: Message[],

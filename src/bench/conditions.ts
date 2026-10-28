@@ -1,6 +1,10 @@
 import { join, relative } from "node:path";
 import type { Complete, RunOptions, Tool } from "../agent/loop.js";
-import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
+import {
+  type ContextConfig,
+  createContextManager,
+  DEFAULT_CONTEXT,
+} from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
 import type { Estimator } from "../context/tokens.js";
 import { modelPrices } from "../llm/models.js";
@@ -16,6 +20,7 @@ export type ConditionOptions = {
   contextWindow: number;
   estimate: Estimator;
   model?: string;
+  context?: Partial<ContextConfig>;
 };
 
 export type ConditionParts = Pick<RunOptions, "limitResult" | "context">;
@@ -47,6 +52,7 @@ export function createCondition(o: ConditionOptions): ConditionParts {
     config: {
       ...DEFAULT_CONTEXT,
       contextWindow: o.contextWindow,
+      ...o.context,
       ...(prices === undefined ? {} : { prices }),
     },
     complete: o.complete,
