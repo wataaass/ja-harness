@@ -45,7 +45,11 @@ import {
 } from "../cli/settings.js";
 import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
-import { createEstimator, estimateMessages } from "../context/tokens.js";
+import {
+  createEstimator,
+  estimateMessages,
+  lastUserIndex,
+} from "../context/tokens.js";
 import { findModel, MODELS, type ModelInfo } from "../llm/models.js";
 import type { Message, ToolSpec, Usage } from "../llm/types.js";
 import { connectMcp, type McpHub, type McpToolInfo } from "../mcp/hub.js";
@@ -1912,10 +1916,14 @@ export async function runApp(o: AppOptions): Promise<number> {
     let instructions = 0;
     let conversationTokens = 0;
     let results = 0;
-    for (const message of conversation) {
+    const lastUser = lastUserIndex(conversation);
+    for (let index = 0; index < conversation.length; index += 1) {
+      const message = conversation[index];
       let tokens = 4 + estimate(message.content);
       if (message.role === "assistant") {
-        tokens += estimate(message.reasoning ?? "");
+        if (message.reasoning !== undefined && index > lastUser) {
+          tokens += estimate(message.reasoning);
+        }
         for (const call of message.toolCalls ?? []) {
           tokens += estimate(call.name) + estimate(call.arguments);
         }

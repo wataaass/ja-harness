@@ -233,7 +233,7 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
         }
       }
 
-      if (!isError && opts.limitResult !== undefined) {
+      if (opts.limitResult !== undefined) {
         result = opts.limitResult(result, usedTool);
       }
 

@@ -616,7 +616,7 @@ describe("runTurn", () => {
     expect(toolMessage?.content).toBe("ok");
   });
 
-  it("limitResult は成功した結果にだけかかり、道具も渡る", async () => {
+  it("limitResult はエラーの結果にもかかり、道具も渡る", async () => {
     const messages: Message[] = [{ role: "user", content: "はじめ" }];
     const ok: Tool = {
       ...tool("ok", async () => "success"),
@@ -626,6 +626,7 @@ describe("runTurn", () => {
       throw new Error("failed");
     });
     const seen: { text: string; tool: Tool | undefined }[] = [];
+    const events: LoopEvent[] = [];
     const { complete } = fakeComplete([
       completion(
         assistantMessage("", [
@@ -643,6 +644,7 @@ describe("runTurn", () => {
       complete,
       tools: [ok, boom],
       messages,
+      onEvent: (event) => events.push(event),
       limitResult: (text, used) => {
         seen.push({ text, tool: used });
         return `short(${text})`;
@@ -653,13 +655,58 @@ describe("runTurn", () => {
       .filter((message) => message.role === "tool")
       .map((message) => message.content);
     expect(results[0]).toBe("short(success)");
-    expect(results[1]).toBe("Error: failed");
-    expect(results[2]).toBe('Error: unknown tool "missing"');
-    expect(results[3]).toMatch(/^Error: invalid JSON arguments: /);
-    expect(seen).toHaveLength(1);
+    expect(results[1]).toBe("short(Error: failed)");
+    expect(results[2]).toBe('short(Error: unknown tool "missing")');
+    expect(results[3]).toMatch(/^short\(Error: invalid JSON arguments: /);
+    expect(seen).toHaveLength(4);
     expect(seen[0]?.text).toBe("success");
     expect(seen[0]?.tool?.name).toBe("ok");
     expect(seen[0]?.tool?.maxResultTokens).toBe(12);
+    expect(seen[1]?.text).toBe("Error: failed");
+    expect(seen[1]?.tool?.name).toBe("boom");
+    expect(seen[2]?.tool).toBeUndefined();
+    expect(seen[3]?.tool).toBeUndefined();
+    const ends = events.filter((event) => event.type === "tool-end");
+    expect(ends.map((event) => event.isError)).toEqual([
+      false,
+      true,
+      true,
+      true,
+    ]);
+  });
+
+  it("長いエラーの結果も limitResult を通って短くなる", async () => {
+    const messages: Message[] = [{ role: "user", content: "はじめ" }];
+    const boom = tool("boom", async () => {
+      throw new Error("E".repeat(1000));
+    });
+    const events: LoopEvent[] = [];
+    const { complete } = fakeComplete([
+      completion(
+        assistantMessage("", [{ id: "boom", name: "boom", arguments: "{}" }]),
+        usage(),
+      ),
+      completion(assistantMessage("終わり"), usage()),
+    ]);
+
+    await runTurn({
+      complete,
+      tools: [boom],
+      messages,
+      onEvent: (event) => events.push(event),
+      limitResult: () => "short error",
+    });
+
+    expect(
+      messages.filter((message) => message.role === "tool")[0]?.content,
+    ).toBe("short error");
+    const end = events.find((event) => event.type === "tool-end");
+    expect(end).toEqual({
+      type: "tool-end",
+      name: "boom",
+      result: "short error",
+      isError: true,
+    });
   });
 
   it("くり返しの注意は短くしたあとに付く", async () => {

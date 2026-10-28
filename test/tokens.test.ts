@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createEstimator, estimateMessages } from "../src/context/tokens.js";
+import {
+  createEstimator,
+  estimateMessages,
+  lastUserIndex,
+} from "../src/context/tokens.js";
 import type { Message } from "../src/llm/types.js";
 
 describe("createEstimator", () => {
@@ -31,6 +35,26 @@ describe("createEstimator", () => {
   });
 });
 
+describe("lastUserIndex", () => {
+  it("最後の user の位置を返す", () => {
+    const messages: Message[] = [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+      { role: "user", content: "c" },
+      { role: "tool", toolCallId: "1", content: "d" },
+    ];
+    expect(lastUserIndex(messages)).toBe(2);
+  });
+
+  it("user がなければ -1", () => {
+    const messages: Message[] = [
+      { role: "system", content: "a" },
+      { role: "assistant", content: "b" },
+    ];
+    expect(lastUserIndex(messages)).toBe(-1);
+  });
+});
+
 describe("estimateMessages", () => {
   it("役割の分・content・reasoning・toolCallsを足す", () => {
     const estimate = createEstimator();
@@ -57,5 +81,32 @@ describe("estimateMessages", () => {
       { role: "tool", toolCallId: "1", content: "" },
     ];
     expect(estimateMessages(messages, estimate)).toBe(4);
+  });
+
+  it("最後の user より前の推論は数えない", () => {
+    const estimate = createEstimator();
+    const messages: Message[] = [
+      { role: "assistant", content: "", reasoning: "abcdefgh" },
+      { role: "user", content: "" },
+    ];
+    expect(estimateMessages(messages, estimate)).toBe(8);
+  });
+
+  it("最後の user より後ろの推論は数える", () => {
+    const estimate = createEstimator();
+    const messages: Message[] = [
+      { role: "user", content: "" },
+      { role: "assistant", content: "", reasoning: "abcdefgh" },
+    ];
+    expect(estimateMessages(messages, estimate)).toBe(10);
+  });
+
+  it("user がなければすべての推論を数える", () => {
+    const estimate = createEstimator();
+    const messages: Message[] = [
+      { role: "system", content: "" },
+      { role: "assistant", content: "", reasoning: "abcdefgh" },
+    ];
+    expect(estimateMessages(messages, estimate)).toBe(10);
   });
 });

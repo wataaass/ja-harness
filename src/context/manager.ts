@@ -68,7 +68,9 @@ export function createContextManager(o: {
   const { config, complete, estimate } = o;
   const threshold = summaryThreshold(config);
   const target = Math.floor(threshold * config.targetRatio);
+  const retryGrowth = Math.max(4000, Math.floor(threshold * 0.1));
   let calls = 0;
+  let failedSummaryAt: number | undefined;
 
   function firstRewrittenIndex(before: Message[], after: Message[]): number {
     for (let i = 0; i < after.length; i += 1) {
@@ -143,7 +145,8 @@ export function createContextManager(o: {
     async beforeStep(messages, tools, reportedTokens, signal) {
       calls += 1;
       const actions: ContextAction[] = [];
-      if (pressure(messages, reportedTokens) <= threshold) {
+      const currentPressure = pressure(messages, reportedTokens);
+      if (currentPressure <= threshold) {
         const prices = config.prices;
         if (config.mode === "always" || prices === undefined) {
           return { actions };
@@ -184,6 +187,14 @@ export function createContextManager(o: {
         return { actions };
       }
 
+      if (
+        failedSummaryAt !== undefined &&
+        currentPressure - failedSummaryAt < retryGrowth
+      ) {
+        applyPrune(messages, pruned, actions);
+        return { actions };
+      }
+
       const keepRecentTokens = Math.min(
         config.keepRecentTokens,
         Math.floor(target / 2),
@@ -196,12 +207,14 @@ export function createContextManager(o: {
         signal,
       );
       if (result.applied) {
+        failedSummaryAt = undefined;
         applyPrune(
           messages,
           pruneToolResults(messages, pruneOptions()),
           actions,
         );
       } else {
+        failedSummaryAt = currentPressure;
         applyPrune(messages, pruned, actions);
       }
       return result.usage === undefined
@@ -212,6 +225,7 @@ export function createContextManager(o: {
     async onOverflow(messages, tools, signal) {
       const actions: ContextAction[] = [];
       prune(messages, actions);
+      const currentPressure = pressure(messages, undefined);
       const result = await summarizeStep(
         messages,
         tools,
@@ -219,6 +233,11 @@ export function createContextManager(o: {
         config.keepRecentTokens,
         signal,
       );
+      if (result.applied) {
+        failedSummaryAt = undefined;
+      } else {
+        failedSummaryAt = currentPressure;
+      }
       return result.usage === undefined
         ? { actions }
         : { usage: result.usage, actions };
@@ -227,6 +246,7 @@ export function createContextManager(o: {
     async compactNow(messages, tools, signal) {
       const actions: ContextAction[] = [];
       prune(messages, actions);
+      const currentPressure = pressure(messages, undefined);
       const last = messages[messages.length - 1];
       const keepRecent =
         last === undefined ? 0 : estimateMessages([last], estimate) + 1;
@@ -237,6 +257,11 @@ export function createContextManager(o: {
         keepRecent,
         signal,
       );
+      if (result.applied) {
+        failedSummaryAt = undefined;
+      } else {
+        failedSummaryAt = currentPressure;
+      }
       return result.usage === undefined
         ? { actions }
         : { usage: result.usage, actions };

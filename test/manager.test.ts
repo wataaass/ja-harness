@@ -85,6 +85,28 @@ function fakeComplete(content: string): {
   };
 }
 
+function fakeCompleteSequence(contents: string[]): {
+  complete: Complete;
+  calls: number;
+} {
+  const state = { calls: 0 };
+  const complete: Complete = async () => {
+    const content = contents[state.calls] ?? "   ";
+    state.calls += 1;
+    return {
+      message: { role: "assistant", content },
+      usage,
+      finishReason: "stop",
+    };
+  };
+  return {
+    complete,
+    get calls() {
+      return state.calls;
+    },
+  };
+}
+
 function messagesWithOldTools(): Message[] {
   return [
     { role: "system", content: "s" },
@@ -293,6 +315,67 @@ describe("createContextManager", () => {
     expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
       "lines pruned",
     );
+  });
+
+  it("要約に失敗したあと、文脈が十分に増えるまで要約を呼ばない", async () => {
+    const fake = fakeComplete("   ");
+    const manager = createContextManager({
+      config: config({ contextWindow: 100 }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    await manager.beforeStep(list, tools, undefined);
+    expect(fake.calls).toBe(1);
+
+    list.push({ role: "user", content: "x".repeat(100) });
+    await manager.beforeStep(list, tools, undefined);
+    expect(fake.calls).toBe(1);
+
+    list.push({ role: "user", content: "y".repeat(5000) });
+    await manager.beforeStep(list, tools, undefined);
+    expect(fake.calls).toBe(2);
+  });
+
+  it("要約に成功したら、次は少し増えても要約を呼ぶ", async () => {
+    const fake = fakeCompleteSequence(["   ", "short", "   "]);
+    const manager = createContextManager({
+      config: config({ contextWindow: 100 }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    await manager.beforeStep(list, tools, undefined);
+    expect(fake.calls).toBe(1);
+
+    list.push({ role: "user", content: "y".repeat(5000) });
+    await manager.beforeStep(list, tools, undefined);
+    expect(fake.calls).toBe(2);
+
+    list.push({ role: "user", content: "z".repeat(100) });
+    await manager.beforeStep(list, tools, undefined);
+    expect(fake.calls).toBe(3);
+  });
+
+  it("onOverflow と compactNow は失敗のあとでも要約を試す", async () => {
+    const fake = fakeComplete("   ");
+    const manager = createContextManager({
+      config: config({ contextWindow: 100 }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    await manager.beforeStep(list, tools, undefined);
+    expect(fake.calls).toBe(1);
+
+    await manager.onOverflow(list, tools);
+    expect(fake.calls).toBe(2);
+
+    await manager.compactNow(list, tools);
+    expect(fake.calls).toBe(3);
   });
 
   it("onOverflow はしきい値以下でも切り詰める", async () => {
