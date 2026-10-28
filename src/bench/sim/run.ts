@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Complete, runTurn, type Tool } from "../../agent/loop.js";
 import { SYSTEM_PROMPT } from "../../agent/prompt.js";
-import { type ContextConfig, DEFAULT_CONTEXT } from "../../context/manager.js";
 import { SUMMARY_INSTRUCTION } from "../../context/summary.js";
 import {
   createEstimator,
@@ -21,7 +20,9 @@ import { createTools } from "../../tools/index.js";
 import {
   CONDITIONS,
   type ConditionName,
+  type ContextOverride,
   createCondition,
+  mergeContext,
 } from "../conditions.js";
 import { timestamp } from "../workspace.js";
 import { type Call, makeScenarios, type Scenario } from "./scenarios.js";
@@ -37,11 +38,6 @@ export const DEFAULT_SIM_MODELS = [
 ];
 
 export const SIM_SCENARIOS = ["short", "medium", "long", "read-heavy"];
-
-export type ContextOverride = Partial<Omit<ContextConfig, "prune" | "mask">> & {
-  prune?: Partial<ContextConfig["prune"]>;
-  mask?: Partial<ContextConfig["mask"]>;
-};
 
 export type PendingCall = { label: string; resultTokens: number };
 export type CallQueue = Map<string, PendingCall[]>;
@@ -493,23 +489,8 @@ export function createSimModel(o: {
   };
 }
 
-export function mergeContext(
-  override: ContextOverride | undefined,
-): Partial<ContextConfig> {
-  if (override === undefined) {
-    return {};
-  }
-  const { prune, mask, ...rest } = override;
-  return {
-    ...rest,
-    ...(prune === undefined
-      ? {}
-      : { prune: { ...DEFAULT_CONTEXT.prune, ...prune } }),
-    ...(mask === undefined
-      ? {}
-      : { mask: { ...DEFAULT_CONTEXT.mask, ...mask } }),
-  };
-}
+export type { ContextOverride } from "../conditions.js";
+export { mergeContext } from "../conditions.js";
 
 function resolveScenarios(
   requested: Array<Scenario | string> | undefined,

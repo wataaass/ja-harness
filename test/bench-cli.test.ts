@@ -41,6 +41,19 @@ describe("parseBenchArgs", () => {
     });
   });
 
+  it("--context の JSON を読む", () => {
+    expect(
+      parseBenchArgs([
+        "--context",
+        '{"mode":"always","mask":{"window":2},"prune":{"maxTokens":1000}}',
+      ]).context,
+    ).toEqual({
+      mode: "always",
+      mask: { window: 2 },
+      prune: { maxTokens: 1000 },
+    });
+  });
+
   it("validate・prepare・grade・help を読む", () => {
     expect(parseBenchArgs(["--validate"]).validate).toBe(true);
     expect(parseBenchArgs(["--rerun-errors", "old.json"]).rerunErrors).toBe(

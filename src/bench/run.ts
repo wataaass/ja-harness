@@ -17,7 +17,9 @@ import { createTools } from "../tools/index.js";
 import {
   CONDITIONS,
   type ConditionName,
+  type ContextOverride,
   createCondition,
+  mergeContext,
 } from "./conditions.js";
 import { loadTasks, type TaskKind } from "./tasks.js";
 import {
@@ -33,6 +35,12 @@ export const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
 export type StopReason = "done" | "max-steps" | "error";
 
+export type ContextActionCounts = {
+  mask: number;
+  prune: number;
+  summary: number;
+};
+
 export type BenchRecord = {
   task: string;
   kind: TaskKind;
@@ -44,6 +52,7 @@ export type BenchRecord = {
   steps: number;
   stop: StopReason;
   usage: Usage;
+  contextActions: ContextActionCounts;
   durationMs: number;
   model: string;
   error?: string;
@@ -57,6 +66,7 @@ export type RunBenchOptions = {
   concurrency: number;
   workRoot?: string;
   resultsDir?: string;
+  context?: ContextOverride;
   env?: NodeJS.ProcessEnv;
   turnTimeoutMs?: number;
   onProgress?: (line: string) => void;
@@ -217,6 +227,16 @@ function averageCost(records: BenchRecord[]): number | undefined {
   return costs.length === 0 ? undefined : average(costs);
 }
 
+function averageContextAction(
+  records: BenchRecord[],
+  action: keyof ContextActionCounts,
+): number {
+  const values = records
+    .filter((record) => !isExecutionFailure(record))
+    .map((record) => record.contextActions[action]);
+  return average(values);
+}
+
 export function formatResultsTable(
   records: BenchRecord[],
   conditions: string[],
@@ -225,7 +245,7 @@ export function formatResultsTable(
   const lines: string[] = [`モデル: ${model}`, "条件別"];
 
   const conditionRows: string[][] = [
-    ["条件", "合格", "合格率", "平均料金", "平均steps", "失敗"],
+    ["条件", "合格", "合格率", "平均料金", "平均steps", "平均mask", "失敗"],
   ];
   for (const condition of conditions) {
     const group = records.filter((record) => record.condition === condition);
@@ -237,6 +257,7 @@ export function formatResultsTable(
       percent(stat.total === 0 ? 0 : stat.passed / stat.total),
       cost === undefined ? "—" : money(cost),
       (stat.total === 0 ? 0 : stat.steps / stat.total).toFixed(1),
+      averageContextAction(group, "mask").toFixed(1),
       String(stat.failed),
     ]);
   }
@@ -300,6 +321,7 @@ export type RunOneOptions = {
   workRoot: string;
   config: ReturnType<typeof readConfig>;
   turnTimeoutMs: number;
+  context?: ContextOverride;
   complete?: Complete;
 };
 
@@ -317,6 +339,7 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
     steps: 0,
     stop: "error",
     usage: zeroUsage(),
+    contextActions: { mask: 0, prune: 0, summary: 0 },
     durationMs: 0,
     model: config.model,
   };
@@ -349,6 +372,7 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
     contextWindow: config.contextWindow,
     estimate,
     model: config.model,
+    context: mergeContext(options.context),
   });
 
   const messages: Message[] = [
@@ -362,6 +386,10 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
   const eventUsage = zeroUsage();
   let eventSteps = 0;
   const onEvent = (event: LoopEvent): void => {
+    if (event.type === "context") {
+      record.contextActions[event.action] += 1;
+      return;
+    }
     if (event.type !== "step-end") {
       return;
     }
@@ -463,6 +491,7 @@ export async function runBench(options: RunBenchOptions): Promise<BenchOutput> {
         workRoot,
         config,
         turnTimeoutMs,
+        ...(options.context === undefined ? {} : { context: options.context }),
       });
       records[index] = record;
       onProgress(formatProgress(index + 1, jobs.length, record));

@@ -18,6 +18,29 @@ export const CONDITIONS = [
 
 export type ConditionName = (typeof CONDITIONS)[number];
 
+export type ContextOverride = Partial<Omit<ContextConfig, "prune" | "mask">> & {
+  prune?: Partial<ContextConfig["prune"]>;
+  mask?: Partial<ContextConfig["mask"]>;
+};
+
+export function mergeContext(
+  override: ContextOverride | undefined,
+): Partial<ContextConfig> {
+  if (override === undefined) {
+    return {};
+  }
+  const { prune, mask, ...rest } = override;
+  return {
+    ...rest,
+    ...(prune === undefined
+      ? {}
+      : { prune: { ...DEFAULT_CONTEXT.prune, ...prune } }),
+    ...(mask === undefined
+      ? {}
+      : { mask: { ...DEFAULT_CONTEXT.mask, ...mask } }),
+  };
+}
+
 export type ConditionOptions = {
   name: ConditionName;
   workspace: string;

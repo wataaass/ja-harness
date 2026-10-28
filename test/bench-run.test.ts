@@ -30,6 +30,7 @@ function record(overrides: Partial<BenchRecord> = {}): BenchRecord {
     steps: 4,
     stop: "done",
     usage: { input: 10, cachedInput: 0, output: 5, reasoning: 0, cost: 0.0021 },
+    contextActions: { mask: 1, prune: 0, summary: 0 },
     durationMs: 41_400,
     model: "deepseek-v4.1-flash",
     ...overrides,
@@ -219,6 +220,57 @@ describe("runOne", () => {
     });
     expect(result.error).toContain("429 Too Many Requests");
   });
+
+  it("文脈管理の action ごとの回数を記録する", async () => {
+    const tasksDir = join(dir, "tasks");
+    const workRoot = join(dir, "work");
+    makeTask(tasksDir);
+
+    let calls = 0;
+    const complete: Complete = async () => {
+      calls += 1;
+      if (calls <= 2) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              {
+                id: `read-${calls}`,
+                name: "read",
+                arguments: JSON.stringify({ paths: ["math.js"] }),
+              },
+            ],
+          },
+          usage: { input: 10, cachedInput: 0, output: 3, reasoning: 0 },
+          finishReason: "tool_calls",
+        };
+      }
+      return {
+        message: { role: "assistant", content: "done" },
+        usage: { input: 10, cachedInput: 0, output: 3, reasoning: 0 },
+        finishReason: "stop",
+      };
+    };
+
+    const task = loadTasks(tasksDir)[0];
+    const result = await runOne({
+      task,
+      condition: "default",
+      rep: 1,
+      workRoot,
+      config: {
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        contextWindow: 100000,
+      },
+      context: { mode: "always", mask: { window: 0, minTokens: 0 } },
+      turnTimeoutMs: 10_000,
+      complete,
+    });
+
+    expect(result.contextActions).toEqual({ mask: 1, prune: 0, summary: 0 });
+  });
 });
 
 describe("formatResultsTable", () => {
@@ -254,8 +306,30 @@ describe("formatResultsTable", () => {
 
     const table = formatResultsTable(records, ["default"], "test-model");
 
-    expect(table).toMatch(/^default\s+1\/2\s+50%\s+\$0\.0030\s+3\.0\s+1$/m);
-    expect(table).toMatch(/平均steps\s+失敗/);
+    expect(table).toMatch(
+      /^default\s+1\/2\s+50%\s+\$0\.0030\s+3\.0\s+1\.0\s+1$/m,
+    );
+    expect(table).toMatch(/平均steps\s+平均mask\s+失敗/);
     expect(table).toContain("1/2（失敗1）");
+  });
+
+  it("条件別に mask の平均回数を出す", () => {
+    const records = [
+      record({ rep: 1, contextActions: { mask: 2, prune: 0, summary: 0 } }),
+      record({ rep: 2, contextActions: { mask: 4, prune: 1, summary: 0 } }),
+      record({
+        rep: 3,
+        stop: "error",
+        steps: 0,
+        contextActions: { mask: 99, prune: 0, summary: 0 },
+        error: "429 Too Many Requests",
+      }),
+    ];
+
+    const table = formatResultsTable(records, ["default"], "test-model");
+
+    expect(table).toMatch(
+      /^default\s+2\/2\s+100%\s+\$0\.0021\s+4\.0\s+3\.0\s+1$/m,
+    );
   });
 });

@@ -153,6 +153,7 @@ export async function gradeExternal(
         steps: 0,
         stop: "done",
         usage: { input: 0, cachedInput: 0, output: 0, reasoning: 0 },
+        contextActions: { mask: 0, prune: 0, summary: 0 },
         durationMs: Date.now() - started,
         model: config.model,
       });

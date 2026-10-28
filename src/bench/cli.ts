@@ -1,12 +1,13 @@
 import {
   CONDITIONS,
   type ConditionName,
+  type ContextOverride,
   isConditionName,
 } from "./conditions.js";
 import { gradeExternal, prepareExternal } from "./external.js";
 import { rerunErrors } from "./rerun.js";
 import { runBench, validateTasks } from "./run.js";
-import { type ContextOverride, runSimulation } from "./sim/run.js";
+import { runSimulation } from "./sim/run.js";
 
 const BENCH_HELP = `使い方: ja-harness bench [オプション]
 
@@ -26,7 +27,7 @@ const BENCH_HELP = `使い方: ja-harness bench [オプション]
   --sim                 API を呼ばずに文脈管理の料金を測る
   --models a,b          --sim で使うモデル
   --scenarios a,b       --sim で使う台本（short,medium,long,read-heavy）
-  --context JSON        --sim の文脈管理の設定を深く上書きする
+  --context JSON        文脈管理の設定を深く上書きする
   --cache-ttl N         --sim のキャッシュの寿命（秒、既定3600）
   -h, --help            この使い方
 `;
@@ -299,6 +300,7 @@ export async function runBenchCli(
       reps: options.reps,
       concurrency: options.concurrency,
       ...(options.workDir === undefined ? {} : { workRoot: options.workDir }),
+      ...(options.context === undefined ? {} : { context: options.context }),
       env,
     });
     process.stdout.write(`${result.table}\n結果: ${result.resultsPath}\n`);

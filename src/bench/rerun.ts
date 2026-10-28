@@ -66,7 +66,15 @@ export function parseResultsJson(text: string): BenchResultsFile {
         "結果の JSON に task・condition・rep のない記録があります",
       );
     }
-    results.push(record as BenchRecord);
+    const actions = asRecord(record.contextActions);
+    results.push({
+      ...(record as BenchRecord),
+      contextActions: {
+        mask: typeof actions.mask === "number" ? actions.mask : 0,
+        prune: typeof actions.prune === "number" ? actions.prune : 0,
+        summary: typeof actions.summary === "number" ? actions.summary : 0,
+      },
+    });
   }
 
   const conditions = Array.isArray(data.conditions)
