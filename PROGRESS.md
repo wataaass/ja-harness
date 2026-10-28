@@ -21,10 +21,12 @@
 - 2026-10-27（夜）: 本人が Windows（Windows Terminal・PowerShell）で起動して試した。日本語入力の Enter と色は良い、Shift+Enter は効かず Ctrl+J は効いた。これを受けて PR #6 に、`ui.enter`（`newline` で Enter 改行・空の行で Enter 送信）、短い表示と道具の印の英語化、権限名の英語化（Confirm・Auto-edit・Auto）、シェルの確認に目的を出す（`description`）、Windows では PowerShell で動かす、を足した。テスト495件
 - 2026-10-27（夜、続き）: PR #6 に、/model を単価だけに、`/` の一覧をコマンド名だけに、シェルの目的の1行を英語に、決まりのファイル（AGENTS.md・CLAUDE.md・JA_HARNESS.md）、スキル（読み込み・`skill` の道具・`/skills` の切り替え・`/skills add`・`/<名前>`・標準の skill-creator）、Windows でホームのフォルダを `os.homedir()` で探す修正、を足した。テスト533件
 
-- 2026-10-28: PR #6 に MCP 対応を足した。`src/mcp/`（設定からのサーバーの一覧・接続）、`src/tools/mcp.ts`（1つの `mcp` の道具。名前だけで引数の形、args 付きで実行。実行の前に確認）、`/mcp`（有効・無効の切り替え）、`/mcp add`、起動時の「つないでいます」。標準の nihongo-kit は最初は無効（`npx -y nihongo-kit`。nihongo-kit は npm に未公開なので、今は `/mcp add` で `node <nihongo-kit>/dist/index.js` を足して使う）。テスト575件。本物の DeepSeek と nihongo-kit で、引数の形を読む → 確認 → `count_chars` で正しい字数、を確かめた。疑似端末で `/mcp` の切り替えと保存も確かめた
+- 2026-10-28: PR #6 に MCP 対応を足した。`src/mcp/`（設定からのサーバーの一覧・接続）、`src/tools/mcp.ts`（1つの `mcp` の道具。名前だけで引数の形、args 付きで実行。実行の前に確認）、`/mcp`（有効・無効の切り替え）、`/mcp add`、起動時の「つないでいます」。テスト575件。本物の DeepSeek と nihongo-kit で、引数の形を読む → 確認 → `count_chars` で正しい字数、を確かめた。疑似端末で `/mcp` の切り替えと保存も確かめた
+
+- 2026-10-28: nihongo-kit のあり・なしを8問で測った（DECISIONS.md の「nihongo-kit を ja-harness に入れない」）。結果を受けて、標準の nihongo-kit を PR #6 から消した。テスト575件
 
 ## 次にやること
-1. 本人が Windows で、PowerShell で動くシェル・確認のカードの目的・英語の表示・決まりのファイル・スキル・MCP（`/mcp add` で nihongo-kit を足し、`/clear` のあと字数を数えさせる）を確かめる（Windows での実行はまだ一度も確かめていない）。起動は `cd $HOME\jh-test` のあと `node $HOME\ja-harness\dist\index.js`
+1. 本人が Windows で、PowerShell で動くシェル・確認のカードの目的・英語の表示・決まりのファイル・スキル・MCP（`/mcp add` でサーバーを足し、`/clear` のあと使わせる）を確かめる（Windows での実行はまだ一度も確かめていない）。起動は `cd $HOME\jh-test` のあと `node $HOME\ja-harness\dist\index.js`
 2. Windows Terminal で Shift+Enter が効かない原因を調べる（Node が Windows でキーを受け取る仕組みで Shift が落ちている可能性）
 3. 道具の結果の上限（2,000・8,000）を価格から決める（キャッシュの割引が小さいモデルでは、上限を上げて読み直しを減らすほうが安い可能性）。決める前に本人に確認する
 4. bench の課題をもう少し難しくする（DeepSeek は3条件とも9割以上通る）
