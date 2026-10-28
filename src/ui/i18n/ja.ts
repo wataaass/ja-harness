@@ -124,6 +124,8 @@ export const ja = {
     cleared: " 会話を空にしました（前のものは /resume で続けられます）",
     unknownCommand: (command: string) => ` Unknown command: ${command}`,
     mcpConnecting: (names: string) => `MCP: ${names} につないでいます…`,
+    mcpEmpty:
+      "MCP サーバーはありません。/mcp add <名前> <command> [args...] で足せます",
     details: {
       on: "verbose",
       off: "brief",
@@ -170,8 +172,8 @@ export const ja = {
         `${mark} ${name}  ${source}  ~${tokens} tokens`,
       skillsSaved: " 保存しました。次の /clear か起動から効きます",
       mcpTitle: "MCP",
-      mcpRow: (mark: string, name: string, source: string, tools: string) =>
-        `${mark} ${name}  ${source}  ${tools}`,
+      mcpRow: (mark: string, name: string, tools: string) =>
+        `${mark} ${name}  ${tools}`,
       mcpTools: (count: string, tokens: string) =>
         `${count} tools  ~${tokens} tokens`,
       mcpNoTools: "-",

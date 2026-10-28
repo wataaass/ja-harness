@@ -42,7 +42,7 @@ describe("mcp の設定", () => {
             env: { TOKEN: "x" },
           },
         },
-        enabled: ["nihongo-kit"],
+        enabled: ["demo"],
         disabled: ["other"],
       },
     });
@@ -57,7 +57,7 @@ describe("mcp の設定", () => {
               env: { TOKEN: "x" },
             },
           },
-          enabled: ["nihongo-kit"],
+          enabled: ["demo"],
           disabled: ["other"],
         },
       },

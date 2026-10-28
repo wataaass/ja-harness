@@ -1950,10 +1950,30 @@ describe("runApp の MCP", () => {
 
       input.send("/mcp\r");
       await waitFor(output, "MCP");
-      await waitFor(output, "[ ] nihongo-kit  builtin  -");
-      await waitFor(output, "[x] demo  config  -");
+      await waitFor(output, "[x] demo  -");
       input.send("\x1b");
       await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("サーバーがなければ一覧を開かずに足し方を出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("/mcp\r");
+      await waitFor(
+        output,
+        "MCP サーバーはありません。/mcp add <名前> <command> [args...] で足せます",
+      );
+      expect(stripAnsi(output.text)).not.toContain("╭─ MCP");
 
       expect(await close(input, output, result)).toBe(0);
     } finally {
@@ -1966,8 +1986,10 @@ describe("runApp の MCP", () => {
     const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
     try {
-      writeSettingsConfig(home, { mcp: { enabled: ["nihongo-kit"] } });
-      const tools = [mcpTool("nihongo-kit", "check", "日本語を点検します。")];
+      writeSettingsConfig(home, {
+        mcp: { servers: { demo: { command: "node" } } },
+      });
+      const tools = [mcpTool("demo", "check", "日本語を点検します。")];
       const { complete } = sequence([]);
       const { input, output, result } = start({
         complete,
@@ -1977,7 +1999,7 @@ describe("runApp の MCP", () => {
       });
 
       input.send("/mcp\r");
-      await waitFor(output, "[x] nihongo-kit  builtin  1 tools");
+      await waitFor(output, "[x] demo  1 tools");
       input.send("\x1b");
       await new Promise((resolve) => setTimeout(resolve, 30));
 
@@ -1992,13 +2014,19 @@ describe("runApp の MCP", () => {
     const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
     try {
+      writeSettingsConfig(home, {
+        mcp: {
+          servers: { demo: { command: "node" } },
+          disabled: ["demo"],
+        },
+      });
       const { complete } = sequence([]);
       const { input, output, result } = start({ complete, home, cwd });
 
       input.send("/mcp\r");
-      await waitFor(output, "[ ] nihongo-kit");
+      await waitFor(output, "[ ] demo");
       input.send(" ");
-      await waitFor(output, "[x] nihongo-kit");
+      await waitFor(output, "[x] demo");
       input.send("\r");
       await waitFor(output, "保存しました。次の /clear か起動から効きます");
 
@@ -2006,7 +2034,7 @@ describe("runApp の MCP", () => {
       const saved = JSON.parse(readFileSync(path, "utf8")) as {
         mcp: { enabled: string[]; disabled: string[] };
       };
-      expect(saved.mcp.enabled).toEqual(["nihongo-kit"]);
+      expect(saved.mcp.enabled).toEqual(["demo"]);
       expect(saved.mcp.disabled).toEqual([]);
 
       expect(await close(input, output, result)).toBe(0);
@@ -2020,11 +2048,17 @@ describe("runApp の MCP", () => {
     const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
     try {
+      writeSettingsConfig(cwd, {
+        mcp: {
+          servers: { demo: { command: "node" } },
+          disabled: ["demo"],
+        },
+      });
       const { complete } = sequence([]);
       const { input, output, result } = start({ complete, home, cwd });
 
       input.send("/mcp\r");
-      await waitFor(output, "[ ] nihongo-kit");
+      await waitFor(output, "[ ] demo");
       input.send(" ");
       input.send("\x1b");
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -2073,7 +2107,9 @@ describe("runApp の MCP", () => {
     const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
     try {
-      writeSettingsConfig(home, { mcp: { enabled: ["nihongo-kit"] } });
+      writeSettingsConfig(home, {
+        mcp: { servers: { demo: { command: "node" } } },
+      });
       const { complete } = sequence([]);
       const { input, output, result } = start({
         complete,
@@ -2082,7 +2118,7 @@ describe("runApp の MCP", () => {
         connectMcp: fakeMcp(),
       });
 
-      await waitFor(output, "MCP: nihongo-kit につないでいます…");
+      await waitFor(output, "MCP: demo につないでいます…");
 
       expect(await close(input, output, result)).toBe(0);
     } finally {

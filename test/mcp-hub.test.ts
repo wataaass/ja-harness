@@ -11,7 +11,6 @@ function server(overrides: Partial<ResolvedServer> = {}): ResolvedServer {
   return {
     name: "echo",
     config: { command: process.execPath, args: [fixture] },
-    source: "config",
     enabled: true,
     ...overrides,
   };

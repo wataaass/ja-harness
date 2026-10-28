@@ -34,7 +34,7 @@ API は OpenAI 互換。既定は OpenCode Go（`JA_HARNESS_BASE_URL`・`JA_HARN
 
 スキル: `~/.ja-harness/skills/<名前>/SKILL.md`（作業フォルダの `.ja-harness/skills/` も）に置く。AI には名前と説明だけを渡し、使うときに本文を読む。`/skills` で有効・無効を切り替え（無効にした分はトークンを使わない）、`/skills add <GitHub の URL かフォルダ>` で入れる、`/<スキル名>` で呼ぶ。「スキルを作って」と頼むと標準の `skill-creator` が使われる。
 
-MCP: 設定の `mcp.servers` に書いた MCP サーバー（stdio）につなぐ。`/mcp add <名前> <command> [args...]` でも足せる。AI には道具の名前と1文だけを渡し、使うときに引数の形を読ませる。道具は実行の前に確認する。`/mcp` で有効・無効を切り替える（次の `/clear` か起動から効く）。標準で [nihongo-kit](https://github.com/wataaass/nihongo-kit)（日本語の字数と文章の点検）を入れてあるが、最初は無効。nihongo-kit は npm に公開する前なので、今は手元に置いて `/mcp add nihongo-kit node <nihongo-kit のフォルダ>/dist/index.js` で使う。
+MCP: 設定の `mcp.servers` に書いた MCP サーバー（stdio）につなぐ。`/mcp add <名前> <command> [args...]` でも足せる。AI には道具の名前と1文だけを渡し、使うときに引数の形を読ませる。道具は実行の前に確認する。`/mcp` で有効・無効を切り替える（次の `/clear` か起動から効く）。標準で入れているサーバーはない。
 
 主なコマンド: `/mode`・`/permission`・`/model`・`/undo`・`/resume`・`/clear`・`/compact`・`/context`・`/skills`・`/mcp`・`/details`・`/help`。`@` でファイルを指定できる。
 
@@ -47,7 +47,7 @@ MCP: 設定の `mcp.servers` に書いた MCP サーバー（stdio）につな�
 
 ## 設計上の判断
 - **日本語で安く使えるコードのエージェント**: 会話の要約や古いツール出力を隠すなど、トークンを減らす手段はハーネスの側にあるため（[nihongo-kit の調査](https://github.com/wataaass/nihongo-kit/blob/main/docs/research/reports/%E3%83%88%E3%83%BC%E3%82%AF%E3%83%B3%E5%89%8A%E6%B8%9B%20%E8%AA%BF%E6%9F%BB.md)）
-- **v0.1 の範囲**: API の接続、端末での日本語の対話と基本の道具、トークンを抑える文脈管理、MCP 対応（nihongo-kit を標準で入れる）
+- **v0.1 の範囲**: API の接続、端末での日本語の対話と基本の道具、トークンを抑える文脈管理、MCP 対応（標準のサーバーは入れない）
 - **TypeScript**: nihongo-kit とそろえ、評価の部品を流用するため
 
 詳しくは [`DECISIONS.md`](DECISIONS.md) にあります。

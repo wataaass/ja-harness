@@ -759,12 +759,7 @@ export async function runApp(o: AppOptions): Promise<number> {
                 String(tools.length),
                 String(mcpToolTokens(tools, estimate)),
               );
-        const text = messages.app.picker.mcpRow(
-          mark,
-          item.server.name,
-          item.server.source,
-          info,
-        );
+        const text = messages.app.picker.mcpRow(mark, item.server.name, info);
         return index === current.index ? theme.accent(text) : text;
       });
       return renderCard({
@@ -2044,6 +2039,10 @@ export async function runApp(o: AppOptions): Promise<number> {
       server,
       enabled: server.enabled,
     }));
+    if (items.length === 0) {
+      emit([messages.app.mcpEmpty]);
+      return;
+    }
     picker = { kind: "mcp", items, index: 0 };
     render();
   }
