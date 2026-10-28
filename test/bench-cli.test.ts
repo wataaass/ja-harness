@@ -54,6 +54,12 @@ describe("parseBenchArgs", () => {
     });
   });
 
+  it("--prev-need を読む", () => {
+    expect(parseBenchArgs(["--prev-need", "0.45"]).prevNeed).toBe(0.45);
+    expect(() => parseBenchArgs(["--prev-need", "1.5"])).toThrow("0から1");
+    expect(() => parseBenchArgs(["--prev-need", "x"])).toThrow("0から1");
+  });
+
   it("validate・prepare・grade・help を読む", () => {
     expect(parseBenchArgs(["--validate"]).validate).toBe(true);
     expect(parseBenchArgs(["--rerun-errors", "old.json"]).rerunErrors).toBe(

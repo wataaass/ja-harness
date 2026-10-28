@@ -258,16 +258,38 @@ describe("runOne", () => {
     let calls = 0;
     const complete: Complete = async () => {
       calls += 1;
-      if (calls <= 2) {
+      if (calls === 1) {
         return {
           message: {
             role: "assistant",
             content: "",
             toolCalls: [
               {
-                id: `read-${calls}`,
+                id: "read-1",
                 name: "read",
                 arguments: JSON.stringify({ paths: ["math.js"] }),
+              },
+            ],
+          },
+          usage: { input: 10, cachedInput: 0, output: 3, reasoning: 0 },
+          finishReason: "tool_calls",
+        };
+      }
+      if (calls === 2) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              {
+                id: "edit-1",
+                name: "edit",
+                arguments: JSON.stringify({
+                  path: "math.js",
+                  edits: [
+                    { oldText: "return a - b;", newText: "return a + b;" },
+                  ],
+                }),
               },
             ],
           },

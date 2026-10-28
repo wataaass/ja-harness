@@ -32,7 +32,14 @@ function config(overrides: Partial<ContextConfig> = {}): ContextConfig {
     targetRatio: 1,
     keepRecentTokens: 10,
     prune: { maxTokens: 80, headTokens: 20, tailTokens: 20 },
-    mask: { window: 5, minTokens: 300, maxCallsAhead: Infinity, margin: 1 },
+    mask: {
+      window: 5,
+      minTokens: 300,
+      maxCallsAhead: Infinity,
+      margin: 1,
+      rereadStale: 0.1,
+      rereadPrevious: 0.3,
+    },
     cacheTtlSeconds: 300,
     overflowRetries: 1,
     mode: "price",
@@ -59,6 +66,27 @@ function messages(): Message[] {
       toolCalls: [{ id: "2", name: "read", arguments: "{}" }],
     },
     { role: "tool", toolCallId: "2", content: "ok" },
+  ];
+}
+
+function previousMessages(): Message[] {
+  return [
+    { role: "system", content: "s" },
+    { role: "user", content: "old" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: "1", name: "read", arguments: "{}" }],
+    },
+    { role: "tool", toolCallId: "1", content: big },
+    { role: "user", content: "new" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: "2", name: "read", arguments: "{}" }],
+    },
+    { role: "tool", toolCallId: "2", content: big },
+    { role: "assistant", content: "done" },
   ];
 }
 
@@ -416,7 +444,7 @@ describe("createContextManager", () => {
       complete: fake.complete,
       estimate: chars,
     });
-    const list = messages();
+    const list = previousMessages();
     const firstTool = list[3];
 
     const prep = await manager.beforeStep(list, tools, undefined);
@@ -432,12 +460,12 @@ describe("createContextManager", () => {
       config: config({
         contextWindow: 10000,
         mask: { window: 0, minTokens: 1 },
-        prices: { input: 0.3, cachedInput: 0.006 },
+        prices: { input: 2, cachedInput: 1 },
       }),
       complete: fake.complete,
       estimate: chars,
     });
-    const list = messages();
+    const list = previousMessages();
 
     for (let i = 0; i < 100; i += 1) {
       await manager.beforeStep(list, tools, undefined);
@@ -455,12 +483,12 @@ describe("createContextManager", () => {
       config: config({
         contextWindow: 10000,
         mask: { window: 0, minTokens: 1 },
-        prices: { input: 3, cachedInput: 0.3 },
+        prices: { input: 0.031, cachedInput: 0.03 },
       }),
       complete: fake.complete,
       estimate: chars,
     });
-    const list = messages();
+    const list = previousMessages();
 
     for (let i = 0; i < 20; i += 1) {
       await manager.beforeStep(list, tools, undefined);
@@ -479,7 +507,7 @@ describe("createContextManager", () => {
       complete: fake.complete,
       estimate: chars,
     });
-    const list = messages();
+    const list = previousMessages();
     const firstTool = list[3];
 
     const prep = await manager.beforeStep(list, tools, undefined);
@@ -509,19 +537,52 @@ describe("createContextManager", () => {
     );
   });
 
-  it("キャッシュが冷えていれば料金を見ずに隠す", async () => {
+  it("キャッシュが冷えても読み直しの損が大きければ隠さない", async () => {
     const fake = fakeComplete("short");
     let clock = 1_000;
     const manager = createContextManager({
       config: config({
         contextWindow: 10000,
         mask: { window: 0, minTokens: 1 },
+        prices: { input: 0.3, cachedInput: 0.006 },
       }),
       complete: fake.complete,
       estimate: chars,
       now: () => clock,
     });
-    const list = messages();
+    const list = previousMessages();
+
+    const warm = await manager.beforeStep(list, tools, undefined);
+    expect(warm.actions).toEqual([]);
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toBe(big);
+
+    clock += 300_001;
+    const cold = await manager.beforeStep(list, tools, undefined);
+    expect(cold.actions).toEqual([]);
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toBe(big);
+  });
+
+  it("キャッシュが冷えていれば loss を見ずに隠す", async () => {
+    const fake = fakeComplete("short");
+    let clock = 1_000;
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        mask: {
+          window: 0,
+          minTokens: 1,
+          maxCallsAhead: Infinity,
+          margin: 2,
+          rereadStale: 0.1,
+          rereadPrevious: 0,
+        },
+        prices: { input: 2, cachedInput: 1 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+      now: () => clock,
+    });
+    const list = previousMessages();
 
     const warm = await manager.beforeStep(list, tools, undefined);
     expect(warm.actions).toEqual([]);
@@ -546,7 +607,7 @@ describe("createContextManager", () => {
       estimate: chars,
       now: () => 1_000,
     });
-    const list = messages();
+    const list = previousMessages();
 
     for (let i = 0; i < 5; i += 1) {
       const prep = await manager.beforeStep(list, tools, undefined);
@@ -572,13 +633,84 @@ describe("createContextManager", () => {
     expect(prep.actions[0]?.action).toBe("mask");
   });
 
+  it("しきい値より下で今の依頼の結果は隠さない", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        mask: { window: 0, minTokens: 1 },
+        prices: { input: 2, cachedInput: 1 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    for (let i = 0; i < 20; i += 1) {
+      const prep = await manager.beforeStep(list, tools, undefined);
+      expect(prep.actions).toEqual([]);
+    }
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toBe(big);
+  });
+
+  it("読み直しの損が大きければ隠さない", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        mask: {
+          window: 0,
+          minTokens: 1,
+          maxCallsAhead: Infinity,
+          margin: 1,
+          rereadStale: 0.1,
+          rereadPrevious: 100,
+        },
+        prices: { input: 2, cachedInput: 1 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = previousMessages();
+
+    for (let i = 0; i < 20; i += 1) {
+      const prep = await manager.beforeStep(list, tools, undefined);
+      expect(prep.actions).toEqual([]);
+    }
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toBe(big);
+  });
+
+  it("always はしきい値より下の候補を料金に関係なく隠す", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        mask: { window: 0, minTokens: 1 },
+        mode: "always",
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = previousMessages();
+
+    const prep = await manager.beforeStep(list, tools, undefined);
+
+    expect(prep.actions.map((action) => action.action)).toEqual(["mask"]);
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
+      "[Hidden to save tokens:",
+    );
+    expect((list[6] as Extract<Message, { role: "tool" }>).content).toBe(big);
+  });
+
   it("既定では targetRatio 0.7 と mask の上限・margin を持つ", () => {
     expect(DEFAULT_CONTEXT.targetRatio).toBe(0.7);
     expect(DEFAULT_CONTEXT.mask).toEqual({
       window: 5,
       minTokens: 300,
-      maxCallsAhead: Infinity,
+      maxCallsAhead: 10,
       margin: 1,
+      rereadStale: 0.1,
+      rereadPrevious: 0.3,
     });
   });
 
@@ -593,7 +725,7 @@ describe("createContextManager", () => {
       complete: fake.complete,
       estimate: chars,
     });
-    const list = messages();
+    const list = previousMessages();
 
     for (let i = 0; i < 100; i += 1) {
       const prep = await manager.beforeStep(list, tools, undefined);
@@ -613,7 +745,7 @@ describe("createContextManager", () => {
       complete: fake.complete,
       estimate: chars,
     });
-    const list = messages();
+    const list = previousMessages();
 
     for (let i = 0; i < 20; i += 1) {
       const prep = await manager.beforeStep(list, tools, undefined);

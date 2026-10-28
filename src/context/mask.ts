@@ -1,4 +1,5 @@
 import type { Message } from "../llm/types.js";
+import { SUMMARY_PREFIX } from "./summary.js";
 import type { Estimator } from "./tokens.js";
 
 const STUB_PREFIX = "[Hidden to save tokens: ";
@@ -166,6 +167,74 @@ function isStaleRead(
     }
   }
   return false;
+}
+
+function lastRequestIndex(messages: Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message?.role === "user" &&
+      !message.content.startsWith(SUMMARY_PREFIX)
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isEligible(
+  message: Message | undefined,
+  call: CallInfo | undefined,
+  o: { minTokens: number; estimate: Estimator },
+): message is Extract<Message, { role: "tool" }> {
+  if (message === undefined || message.role !== "tool") {
+    return false;
+  }
+  if (isMasked(message.content)) {
+    return false;
+  }
+  if (o.estimate(message.content) < o.minTokens) {
+    return false;
+  }
+  if (call === undefined) {
+    return false;
+  }
+  return call.name !== "skill" && call.name !== "submit_plan";
+}
+
+export type MaskCandidate = {
+  index: number;
+  kind: "stale" | "previous";
+};
+
+export type BelowThresholdOptions = {
+  minTokens: number;
+  estimate: Estimator;
+};
+
+export function belowThresholdCandidates(
+  messages: Message[],
+  o: BelowThresholdOptions,
+): MaskCandidate[] {
+  const lastRequest = lastRequestIndex(messages);
+  const calls = callInfo(messages);
+  const results = toolResults(messages);
+  const candidates: MaskCandidate[] = [];
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const call =
+      message?.role === "tool" ? calls.get(message.toolCallId) : undefined;
+    if (!isEligible(message, call, o) || call === undefined) {
+      continue;
+    }
+    if (isStaleRead(messages, index, call, results)) {
+      candidates.push({ index, kind: "stale" });
+    } else if (index < lastRequest) {
+      candidates.push({ index, kind: "previous" });
+    }
+  }
+  return candidates;
 }
 
 export type MaskOptions = {

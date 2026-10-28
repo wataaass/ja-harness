@@ -1,6 +1,11 @@
 import type { Complete } from "../agent/loop.js";
 import type { Message, ToolSpec, Usage } from "../llm/types.js";
-import { applyMask, maskCandidates } from "./mask.js";
+import {
+  applyMask,
+  belowThresholdCandidates,
+  type MaskCandidate,
+  maskCandidates,
+} from "./mask.js";
 import { rewritePays } from "./price.js";
 import { pruneToolResults } from "./prune.js";
 import { summarize } from "./summary.js";
@@ -19,6 +24,8 @@ export type ContextConfig = {
     minTokens: number;
     maxCallsAhead: number;
     margin: number;
+    rereadStale: number;
+    rereadPrevious: number;
   };
   cacheTtlSeconds: number;
   maskBelowThreshold?: boolean;
@@ -34,7 +41,14 @@ export const DEFAULT_CONTEXT: Omit<ContextConfig, "contextWindow"> = {
   targetRatio: 0.7,
   keepRecentTokens: 20000,
   prune: { maxTokens: 4000, headTokens: 2000, tailTokens: 500 },
-  mask: { window: 5, minTokens: 300, maxCallsAhead: Infinity, margin: 1 },
+  mask: {
+    window: 5,
+    minTokens: 300,
+    maxCallsAhead: 10,
+    margin: 1,
+    rereadStale: 0.1,
+    rereadPrevious: 0.3,
+  },
   cacheTtlSeconds: 300,
   overflowRetries: 1,
   mode: "price",
@@ -127,6 +141,37 @@ export function createContextManager(o: {
       minTokens: config.mask.minTokens,
       estimate,
     });
+  }
+
+  function belowCandidates(messages: Message[]): MaskCandidate[] {
+    return belowThresholdCandidates(messages, {
+      minTokens: config.mask.minTokens,
+      estimate,
+    });
+  }
+
+  function rereadCost(
+    messages: Message[],
+    chosen: MaskCandidate[],
+    prices: { input: number; cachedInput: number },
+  ): number {
+    const contextTokens = estimateMessages(messages, estimate);
+    let total = 0;
+    for (const candidate of chosen) {
+      const message = messages[candidate.index];
+      if (message === undefined || message.role !== "tool") {
+        continue;
+      }
+      const probability =
+        candidate.kind === "stale"
+          ? (config.mask.rereadStale ?? 0.1)
+          : (config.mask.rereadPrevious ?? 0.3);
+      const resultTokens = estimate(message.content);
+      total +=
+        probability *
+        (contextTokens * prices.cachedInput + resultTokens * prices.input);
+    }
+    return total;
   }
 
   function applyMasked(
@@ -244,14 +289,12 @@ export function createContextManager(o: {
         if (config.maskBelowThreshold === false) {
           return finish();
         }
-        const positions = candidates(messages);
-        if (positions.length === 0) {
+        const below = belowCandidates(messages);
+        if (below.length === 0) {
           return finish();
         }
-        const cold =
-          lastRequestAt !== undefined &&
-          now() - lastRequestAt > config.cacheTtlSeconds * 1000;
-        if (cold || config.mode === "always") {
+        const positions = below.map((candidate) => candidate.index);
+        if (config.mode === "always") {
           applyMasked(messages, positions, actions);
           return finish();
         }
@@ -259,11 +302,16 @@ export function createContextManager(o: {
         if (prices === undefined) {
           return finish();
         }
+        const cold =
+          lastRequestAt !== undefined &&
+          now() - lastRequestAt > config.cacheTtlSeconds * 1000;
         const result = applyMask(messages, positions, estimate);
-        const rewrittenTokens = estimateMessages(
-          result.messages.slice(result.firstIndex),
-          estimate,
-        );
+        const rewrittenTokens = cold
+          ? 0
+          : estimateMessages(
+              result.messages.slice(result.firstIndex),
+              estimate,
+            );
         const callsAhead = Math.min(
           config.mask.maxCallsAhead ?? Infinity,
           Math.max(config.minCallsAhead, calls),
@@ -275,6 +323,7 @@ export function createContextManager(o: {
             callsAhead,
             prices,
             margin: config.mask.margin ?? 1,
+            rereadCost: rereadCost(messages, below, prices),
           })
         ) {
           messages.splice(0, messages.length, ...result.messages);

@@ -83,6 +83,7 @@ export type SimOptions = {
   scenarios?: Array<Scenario | string>;
   context?: ContextOverride;
   cacheTtlSeconds?: number;
+  prevNeed?: number;
   resultsDir?: string;
   now?: Date;
   onProgress?: (line: string) => void;
@@ -494,8 +495,9 @@ export { mergeContext } from "../conditions.js";
 
 function resolveScenarios(
   requested: Array<Scenario | string> | undefined,
+  prevNeed: number | undefined,
 ): Scenario[] {
-  const all = makeScenarios();
+  const all = makeScenarios(prevNeed === undefined ? {} : { prevNeed });
   if (requested === undefined) {
     return all;
   }
@@ -601,8 +603,9 @@ export async function runSimulation(
 ): Promise<SimOutput> {
   const models = options.models ?? DEFAULT_SIM_MODELS;
   const conditions = options.conditions ?? [...CONDITIONS];
-  const scenarios = resolveScenarios(options.scenarios);
+  const scenarios = resolveScenarios(options.scenarios, options.prevNeed);
   const cacheTtlSeconds = options.cacheTtlSeconds ?? 3600;
+  const prevNeed = options.prevNeed ?? 0.3;
   const context = mergeContext(options.context);
   const resultsDir = options.resultsDir ?? "bench/results";
   const now = options.now ?? new Date();
@@ -696,6 +699,7 @@ export async function runSimulation(
       {
         createdAt: now.toISOString(),
         cacheTtlSeconds,
+        prevNeed,
         context,
         models,
         conditions,

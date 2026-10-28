@@ -103,7 +103,6 @@ type State = {
   sequence: number;
   globalStep: number;
   steps: Step[];
-  history: HistoryItem[];
   reads: Map<string, HistoryItem>;
   pendingReread: string[];
 };
@@ -117,7 +116,6 @@ function newState(seed: number, prefix: string): State {
     sequence: 0,
     globalStep: 0,
     steps: [],
-    history: [],
     reads: new Map(),
     pendingReread: [],
   };
@@ -206,14 +204,6 @@ function pushStep(
     step.needs = needs;
   }
   state.steps.push(step);
-  for (const call of calls) {
-    state.history.push({
-      label: call.label,
-      tool: call.tool,
-      stepIndex: state.globalStep,
-      call,
-    });
-  }
   state.globalStep += 1;
 }
 
@@ -246,9 +236,8 @@ function readStep(state: State, file: string, large: boolean): Call {
 }
 
 function editStep(state: State, file: string): Call {
-  const read = state.reads.get(file);
   const call = makeCall(state, "edit", argsFor(state, "edit", file), false);
-  pushStep(state, [call], read === undefined ? undefined : [read.label]);
+  pushStep(state, [call], undefined);
   state.pendingReread.push(file);
   return call;
 }
@@ -336,44 +325,116 @@ function buildTurn(
   };
 }
 
-function addOldDependencies(state: State, turns: Turn[]): void {
-  const flat = turns.flatMap((turn) => turn.steps);
-  const toolSteps = flat
-    .map((step, index) => ({ step, index }))
-    .filter((item) => item.step.calls.length > 0);
-  const count = Math.max(1, Math.round(toolSteps.length * 0.1));
+type OrderedCall = {
+  call: Call;
+  turn: number;
+  step: number;
+  order: number;
+};
 
-  for (let k = 0; k < count; k += 1) {
-    const position = Math.floor((k + 0.5) * (toolSteps.length / count));
-    const target = toolSteps[position];
-    if (target === undefined || target.index < 2) {
+function orderedCalls(turns: Turn[]): OrderedCall[] {
+  const calls: OrderedCall[] = [];
+  for (let turn = 0; turn < turns.length; turn += 1) {
+    const steps = turns[turn]?.steps ?? [];
+    for (let step = 0; step < steps.length; step += 1) {
+      for (const call of steps[step]?.calls ?? []) {
+        calls.push({ call, turn, step, order: calls.length });
+      }
+    }
+  }
+  return calls;
+}
+
+function callPaths(call: Call): string[] {
+  if (call.tool === "read") {
+    const paths = call.args.paths;
+    if (Array.isArray(paths)) {
+      return paths.filter((path): path is string => typeof path === "string");
+    }
+  }
+  const path = call.args.path;
+  return typeof path === "string" ? [path] : [];
+}
+
+function isStaleRead(candidate: OrderedCall, calls: OrderedCall[]): boolean {
+  if (candidate.call.tool !== "read") {
+    return false;
+  }
+  const paths = new Set(callPaths(candidate.call));
+  if (paths.size === 0) {
+    return false;
+  }
+  return calls.some(
+    (other) =>
+      other.order > candidate.order &&
+      (other.call.tool === "edit" || other.call.tool === "write") &&
+      callPaths(other.call).some((path) => paths.has(path)),
+  );
+}
+
+function addNeed(step: Step, label: string): void {
+  const needs = step.needs ?? [];
+  if (!needs.includes(label)) {
+    needs.push(label);
+    step.needs = needs;
+  }
+}
+
+function addNeeds(state: State, turns: Turn[], prevNeed: number): void {
+  const calls = orderedCalls(turns);
+  for (const turn of turns) {
+    for (const step of turn.steps) {
+      delete step.needs;
+    }
+  }
+  const eligible = calls.filter(
+    (item) =>
+      item.call.tool !== "edit" &&
+      item.call.tool !== "write" &&
+      !isStaleRead(item, calls),
+  );
+
+  for (const item of eligible) {
+    const steps = turns[item.turn]?.steps ?? [];
+    const later = steps.length - item.step - 1;
+    if (later <= 0) {
       continue;
     }
-    const gap = Math.min(5, target.index);
-    const earlier = state.history.filter(
-      (item) =>
-        item.stepIndex <= target.index - gap &&
-        item.tool !== "edit" &&
-        item.tool !== "write",
-    );
-    if (earlier.length === 0) {
+    if (state.rng() >= 0.8) {
       continue;
     }
-    const chosen = pick(state.rng, earlier);
-    const needs = target.step.needs ?? [];
-    if (!needs.includes(chosen.label)) {
-      needs.push(chosen.label);
-      target.step.needs = needs;
+    const target = steps[item.step + 1 + Math.floor(state.rng() * later)];
+    if (target !== undefined) {
+      addNeed(target, item.call.label);
+    }
+  }
+
+  for (const item of eligible) {
+    const next = turns[item.turn + 1];
+    if (next === undefined) {
+      continue;
+    }
+    if (state.rng() >= prevNeed) {
+      continue;
+    }
+    const target = next.steps[0];
+    if (target !== undefined) {
+      addNeed(target, item.call.label);
     }
   }
 }
 
-function finish(state: State, id: string, turns: Turn[]): Scenario {
-  addOldDependencies(state, turns);
+function finish(
+  state: State,
+  id: string,
+  turns: Turn[],
+  prevNeed: number,
+): Scenario {
+  addNeeds(state, turns, prevNeed);
   return { id, turns };
 }
 
-function shortScenario(seed: number): Scenario {
+function shortScenario(seed: number, prevNeed: number): Scenario {
   const state = newState(seed, "short");
   state.steps = [];
   readStep(state, "src/agent/loop.ts", false);
@@ -394,10 +455,10 @@ function shortScenario(seed: number): Scenario {
   const turns: Turn[] = [
     { idleSeconds: 0, user: "短い不具合を直して。", steps },
   ];
-  return finish(state, "short", turns);
+  return finish(state, "short", turns, prevNeed);
 }
 
-function mediumScenario(seed: number): Scenario {
+function mediumScenario(seed: number, prevNeed: number): Scenario {
   const state = newState(seed, "medium");
   const weights: Weights = {
     read: 0.35,
@@ -421,10 +482,10 @@ function mediumScenario(seed: number): Scenario {
       large: false,
     }),
   ];
-  return finish(state, "medium", turns);
+  return finish(state, "medium", turns, prevNeed);
 }
 
-function longScenario(seed: number): Scenario {
+function longScenario(seed: number, prevNeed: number): Scenario {
   const state = newState(seed, "long");
   const weights: Weights = {
     read: 0.55,
@@ -440,10 +501,10 @@ function longScenario(seed: number): Scenario {
     buildTurn(state, { idleSeconds: 1800, budget: 20, weights, large: true }),
     buildTurn(state, { idleSeconds: 60, budget: 16, weights, large: true }),
   ];
-  return finish(state, "long", turns);
+  return finish(state, "long", turns, prevNeed);
 }
 
-function readHeavyScenario(seed: number): Scenario {
+function readHeavyScenario(seed: number, prevNeed: number): Scenario {
   const state = newState(seed, "read-heavy");
   const weights: Weights = {
     read: 0.65,
@@ -454,14 +515,15 @@ function readHeavyScenario(seed: number): Scenario {
   const turns = [
     buildTurn(state, { idleSeconds: 0, budget: 40, weights, large: false }),
   ];
-  return finish(state, "read-heavy", turns);
+  return finish(state, "read-heavy", turns, prevNeed);
 }
 
-export function makeScenarios(): Scenario[] {
+export function makeScenarios(o: { prevNeed?: number } = {}): Scenario[] {
+  const prevNeed = o.prevNeed ?? 0.3;
   return [
-    shortScenario(0x51a7),
-    mediumScenario(0x8e21),
-    longScenario(0xc0de),
-    readHeavyScenario(0x7a11),
+    shortScenario(0x51a7, prevNeed),
+    mediumScenario(0x8e21, prevNeed),
+    longScenario(0xc0de, prevNeed),
+    readHeavyScenario(0x7a11, prevNeed),
   ];
 }

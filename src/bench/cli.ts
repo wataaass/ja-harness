@@ -28,6 +28,7 @@ const BENCH_HELP = `使い方: ja-harness bench [オプション]
   --models a,b          --sim で使うモデル
   --scenarios a,b       --sim で使う台本（short,medium,long,read-heavy）
   --context JSON        文脈管理の設定を深く上書きする
+  --prev-need P         --sim で前のやりとりの結果を読む確率（既定0.3）
   --cache-ttl N         --sim のキャッシュの寿命（秒、既定3600）
   -h, --help            この使い方
 `;
@@ -47,6 +48,7 @@ export type BenchArgs = {
   models?: string[];
   scenarios?: string[];
   context?: ContextOverride;
+  prevNeed?: number;
   cacheTtl?: number;
   help: boolean;
 };
@@ -74,6 +76,19 @@ function nonNegative(value: string, option: string): number {
   const number = Number(value);
   if (!/^\d+$/.test(value)) {
     throw new Error(`${option} は0以上の整数です`);
+  }
+  return number;
+}
+
+function probability(value: string, option: string): number {
+  const number = Number(value);
+  if (
+    value.trim() === "" ||
+    !Number.isFinite(number) ||
+    number < 0 ||
+    number > 1
+  ) {
+    throw new Error(`${option} は0から1の数です`);
   }
   return number;
 }
@@ -133,6 +148,10 @@ export function parseBenchArgs(args: string[]): BenchArgs {
     } else if (arg === "--context") {
       const item = optionValue(args, index, arg);
       parsed.context = contextJson(item.value);
+      index = item.next;
+    } else if (arg === "--prev-need") {
+      const item = optionValue(args, index, arg);
+      parsed.prevNeed = probability(item.value, arg);
       index = item.next;
     } else if (arg === "--cache-ttl") {
       const item = optionValue(args, index, arg);
@@ -238,6 +257,9 @@ export async function runBenchCli(
           ? {}
           : { scenarios: options.scenarios }),
         ...(options.context === undefined ? {} : { context: options.context }),
+        ...(options.prevNeed === undefined
+          ? {}
+          : { prevNeed: options.prevNeed }),
         ...(options.cacheTtl === undefined
           ? {}
           : { cacheTtlSeconds: options.cacheTtl }),

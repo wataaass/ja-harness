@@ -89,9 +89,15 @@ describe("createCondition", () => {
       {
         role: "assistant",
         content: "",
-        toolCalls: [{ id: "1", name: "shell", arguments: "{}" }],
+        toolCalls: [{ id: "1", name: "read", arguments: '{"paths":["a.ts"]}' }],
       },
       { role: "tool", toolCallId: "1", content: big },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "2", name: "edit", arguments: '{"path":"a.ts"}' }],
+      },
+      { role: "tool", toolCallId: "2", content: "ok" },
       { role: "assistant", content: "done" },
     ];
     const specs: ToolSpec[] = [tool];

@@ -11,7 +11,11 @@ import {
   runSimulation,
   snapshotRequest,
 } from "../src/bench/sim/run.js";
-import { makeScenarios, type Scenario } from "../src/bench/sim/scenarios.js";
+import {
+  type Call,
+  makeScenarios,
+  type Scenario,
+} from "../src/bench/sim/scenarios.js";
 import { DEFAULT_CONTEXT } from "../src/context/manager.js";
 import { maskStub } from "../src/context/mask.js";
 import { createEstimator } from "../src/context/tokens.js";
@@ -101,6 +105,170 @@ describe("makeScenarios", () => {
         for (const call of step.calls) {
           expect(call.resultTokens).toBeGreaterThanOrEqual(50);
         }
+      }
+    }
+  });
+});
+
+describe("needs の確率", () => {
+  type Position = {
+    call: Call;
+    turn: number;
+    step: number;
+    order: number;
+  };
+
+  const callPaths = (call: Call): string[] => {
+    if (call.tool === "read") {
+      const paths = call.args.paths;
+      if (Array.isArray(paths)) {
+        return paths.filter((path): path is string => typeof path === "string");
+      }
+    }
+    return typeof call.args.path === "string" ? [call.args.path] : [];
+  };
+
+  function positions(scenario: Scenario): Position[] {
+    const items: Position[] = [];
+    scenario.turns.forEach((turn, turnIndex) => {
+      turn.steps.forEach((step, stepIndex) => {
+        for (const call of step.calls) {
+          items.push({
+            call,
+            turn: turnIndex,
+            step: stepIndex,
+            order: items.length,
+          });
+        }
+      });
+    });
+    return items;
+  }
+
+  function isStale(candidate: Position, items: Position[]): boolean {
+    if (candidate.call.tool !== "read") {
+      return false;
+    }
+    const paths = callPaths(candidate.call);
+    return items.some(
+      (other) =>
+        other.order > candidate.order &&
+        (other.call.tool === "edit" || other.call.tool === "write") &&
+        callPaths(other.call).some((path) => paths.includes(path)),
+    );
+  }
+
+  function isEligible(candidate: Position, items: Position[]): boolean {
+    return (
+      candidate.call.tool !== "edit" &&
+      candidate.call.tool !== "write" &&
+      !isStale(candidate, items)
+    );
+  }
+
+  it("種が同じなら毎回同じ", () => {
+    expect(makeScenarios({ prevNeed: 0.3 })).toEqual(
+      makeScenarios({ prevNeed: 0.3 }),
+    );
+  });
+
+  it("同じ turn の結果は後ろの1つの step だけに入る", () => {
+    for (const scenario of makeScenarios({ prevNeed: 0 })) {
+      const items = positions(scenario);
+      for (const item of items) {
+        if (!isEligible(item, items)) {
+          continue;
+        }
+        const steps = scenario.turns[item.turn]?.steps ?? [];
+        const targets = steps
+          .map((step, index) => ({ step, index }))
+          .filter(
+            (target) =>
+              target.index > item.step &&
+              (target.step.needs ?? []).includes(item.call.label),
+          );
+        expect(targets.length).toBeLessThanOrEqual(1);
+      }
+      for (
+        let turnIndex = 0;
+        turnIndex < scenario.turns.length;
+        turnIndex += 1
+      ) {
+        const steps = scenario.turns[turnIndex]?.steps ?? [];
+        for (let stepIndex = 0; stepIndex < steps.length; stepIndex += 1) {
+          for (const need of steps[stepIndex]?.needs ?? []) {
+            const source = items.find((item) => item.call.label === need);
+            expect(source?.turn).toBe(turnIndex);
+            expect(source?.step).toBeLessThan(stepIndex);
+            expect(isEligible(source as Position, items)).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it("同じ turn は 0.8、前の turn は prevNeed の割合で選ぶ", () => {
+    const rate = (prevNeed: number) => {
+      let same = 0;
+      let sameNeeded = 0;
+      let previous = 0;
+      let previousNeeded = 0;
+      for (const scenario of makeScenarios({ prevNeed })) {
+        const items = positions(scenario);
+        for (const item of items) {
+          if (!isEligible(item, items)) {
+            continue;
+          }
+          const steps = scenario.turns[item.turn]?.steps ?? [];
+          if (item.step + 1 < steps.length) {
+            same += 1;
+            if (
+              steps
+                .slice(item.step + 1)
+                .some((step) => (step.needs ?? []).includes(item.call.label))
+            ) {
+              sameNeeded += 1;
+            }
+          }
+          const next = scenario.turns[item.turn + 1];
+          if (next !== undefined) {
+            previous += 1;
+            if ((next.steps[0]?.needs ?? []).includes(item.call.label)) {
+              previousNeeded += 1;
+            }
+          }
+        }
+      }
+      return {
+        same: sameNeeded / same,
+        previous: previousNeeded / previous,
+      };
+    };
+
+    const fixed = rate(0.3);
+    expect(fixed.same).toBeGreaterThan(0.7);
+    expect(fixed.same).toBeLessThan(0.9);
+    expect(fixed.previous).toBeGreaterThan(0.2);
+    expect(fixed.previous).toBeLessThan(0.4);
+    expect(rate(0.3)).toEqual(fixed);
+    expect(rate(0).previous).toBe(0);
+    expect(rate(1).previous).toBe(1);
+  });
+
+  it("前の turn の結果は次の turn の最初の step に入る", () => {
+    const none = makeScenarios({ prevNeed: 0 });
+    const all = makeScenarios({ prevNeed: 1 });
+    for (let index = 0; index < none.length; index += 1) {
+      const withoutPrevious = none[index] as Scenario;
+      const withPrevious = all[index] as Scenario;
+      const items = positions(withPrevious);
+      for (let turn = 1; turn < withPrevious.turns.length; turn += 1) {
+        expect(withoutPrevious.turns[turn]?.steps[0]?.needs).toBeUndefined();
+        const expected = items
+          .filter((item) => item.turn === turn - 1 && isEligible(item, items))
+          .map((item) => item.call.label);
+        const needs = withPrevious.turns[turn]?.steps[0]?.needs ?? [];
+        expect(new Set(needs)).toEqual(new Set(expected));
       }
     }
   });

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMask,
+  belowThresholdCandidates,
   isMasked,
   maskCandidates,
   maskStub,
 } from "../src/context/mask.js";
+import { SUMMARY_PREFIX } from "../src/context/summary.js";
 import type { Estimator } from "../src/context/tokens.js";
 import type { Message, ToolCall } from "../src/llm/types.js";
 
@@ -175,6 +177,75 @@ describe("maskCandidates", () => {
     ];
     expect(
       maskCandidates(messages, { window: 5, minTokens: 1, estimate: chars }),
+    ).toEqual([]);
+  });
+});
+
+describe("belowThresholdCandidates", () => {
+  it("今の依頼の途中の結果は選ばない", () => {
+    const messages: Message[] = [
+      { role: "user", content: "u" },
+      assistant(call("1", "read", { paths: ["a.ts"] })),
+      tool("1", "a".repeat(100)),
+      { role: "assistant", content: "done" },
+    ];
+    expect(
+      belowThresholdCandidates(messages, { minTokens: 1, estimate: chars }),
+    ).toEqual([]);
+  });
+
+  it("前の依頼の結果と古くなった読み取りを選び、種類を返す", () => {
+    const messages: Message[] = [
+      { role: "user", content: "old" },
+      assistant(call("1", "read", { paths: ["a.ts"] })),
+      tool("1", "a".repeat(100)),
+      { role: "user", content: "new" },
+      assistant(call("2", "read", { paths: ["b.ts"] })),
+      tool("2", "b".repeat(100)),
+      assistant(call("3", "edit", { path: "b.ts" })),
+      tool("3", "ok"),
+      { role: "assistant", content: "done" },
+    ];
+    expect(
+      belowThresholdCandidates(messages, { minTokens: 1, estimate: chars }),
+    ).toEqual([
+      { index: 2, kind: "previous" },
+      { index: 5, kind: "stale" },
+    ]);
+  });
+
+  it("要約の跡は依頼と数えない", () => {
+    const messages: Message[] = [
+      { role: "system", content: "s" },
+      {
+        role: "user",
+        content: `${SUMMARY_PREFIX}
+
+<checkpoint>x</checkpoint>`,
+      },
+      assistant(call("1", "read", { paths: ["a.ts"] })),
+      tool("1", "a".repeat(100)),
+      { role: "assistant", content: "done" },
+    ];
+    expect(
+      belowThresholdCandidates(messages, { minTokens: 1, estimate: chars }),
+    ).toEqual([]);
+  });
+
+  it("小さい結果・skill・すでに跡のものは選ばない", () => {
+    const messages: Message[] = [
+      { role: "user", content: "old" },
+      assistant(call("1", "read", { paths: ["a.ts"] })),
+      tool("1", "a".repeat(10)),
+      assistant(call("2", "skill", { name: "x" })),
+      tool("2", "a".repeat(100)),
+      assistant(call("3", "read", { paths: ["b.ts"] })),
+      tool("3", maskStub("read", JSON.stringify({ paths: ["b.ts"] }), 10)),
+      { role: "user", content: "new" },
+      { role: "assistant", content: "done" },
+    ];
+    expect(
+      belowThresholdCandidates(messages, { minTokens: 20, estimate: chars }),
     ).toEqual([]);
   });
 });
