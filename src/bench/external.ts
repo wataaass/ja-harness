@@ -18,7 +18,7 @@ import {
 export type ExternalTask = {
   id: string;
   kind: string;
-  prompt: string;
+  turns: string[];
   workspaces: string[];
 };
 
@@ -61,7 +61,7 @@ export function prepareExternal(options: PrepareExternalOptions): {
       return {
         id: task.id,
         kind: task.kind,
-        prompt: task.prompt,
+        turns: task.turns,
         workspaces,
       };
     }),
@@ -151,6 +151,7 @@ export async function gradeExternal(
         passed: grade.passed,
         failed: grade.failed,
         steps: 0,
+        turns: task.turns.length,
         stop: "done",
         usage: { input: 0, cachedInput: 0, output: 0, reasoning: 0 },
         contextActions: { mask: 0, prune: 0, summary: 0 },

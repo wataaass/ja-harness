@@ -1,0 +1,8 @@
+{
+  "name": "multi-invoice",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

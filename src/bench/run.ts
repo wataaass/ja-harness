@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Complete, type LoopEvent, runTurn } from "../agent/loop.js";
 import { SYSTEM_PROMPT } from "../agent/prompt.js";
+import { createRepeatTracker } from "../agent/repeat.js";
 import { readConfig, useOpencodeSession } from "../cli/config.js";
 import { createEstimator } from "../context/tokens.js";
 import {
@@ -50,6 +51,7 @@ export type BenchRecord = {
   passed: number;
   failed: number;
   steps: number;
+  turns: number;
   stop: StopReason;
   usage: Usage;
   contextActions: ContextActionCounts;
@@ -337,6 +339,7 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
     passed: 0,
     failed: 0,
     steps: 0,
+    turns: 0,
     stop: "error",
     usage: zeroUsage(),
     contextActions: { mask: 0, prune: 0, summary: 0 },
@@ -375,15 +378,11 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
     context: mergeContext(options.context),
   });
 
-  const messages: Message[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: task.prompt },
-  ];
+  const messages: Message[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  const tools = createTools(workspace, async () => true);
+  const repeat = createRepeatTracker();
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), turnTimeoutMs);
-
-  const eventUsage = zeroUsage();
+  let eventUsage = zeroUsage();
   let eventSteps = 0;
   const onEvent = (event: LoopEvent): void => {
     if (event.type === "context") {
@@ -398,26 +397,42 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
   };
 
   let runError: string | undefined;
-  try {
-    const result = await runTurn({
-      complete,
-      tools: createTools(workspace, async () => true),
-      messages,
-      maxSteps: 30,
-      signal: controller.signal,
-      onEvent,
-      ...parts,
-    });
-    record.steps = result.steps;
-    record.stop = result.stop;
-    record.usage = result.usage;
-  } catch (error) {
-    record.steps = eventSteps;
-    record.usage = eventUsage;
-    record.stop = "error";
-    runError = controller.signal.aborted ? "時間切れ" : errorMessage(error);
-  } finally {
-    clearTimeout(timer);
+  record.stop = "done";
+  for (const [index, turn] of task.turns.entries()) {
+    messages.push({ role: "user", content: turn });
+    eventUsage = zeroUsage();
+    eventSteps = 0;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), turnTimeoutMs);
+    try {
+      const result = await runTurn({
+        complete,
+        tools,
+        messages,
+        maxSteps: 30,
+        signal: controller.signal,
+        onEvent,
+        repeat,
+        ...parts,
+      });
+      record.steps += result.steps;
+      addUsage(record.usage, result.usage);
+      record.turns = index + 1;
+      record.stop = result.stop;
+      if (result.stop !== "done") {
+        break;
+      }
+    } catch (error) {
+      record.steps += eventSteps;
+      addUsage(record.usage, eventUsage);
+      record.turns = index + 1;
+      record.stop = "error";
+      runError = controller.signal.aborted ? "時間切れ" : errorMessage(error);
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   let gradeError: string | undefined;

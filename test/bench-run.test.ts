@@ -28,6 +28,7 @@ function record(overrides: Partial<BenchRecord> = {}): BenchRecord {
     passed: 3,
     failed: 0,
     steps: 4,
+    turns: 1,
     stop: "done",
     usage: { input: 10, cachedInput: 0, output: 5, reasoning: 0, cost: 0.0021 },
     contextActions: { mask: 1, prune: 0, summary: 0 },
@@ -48,6 +49,34 @@ function makeTask(root: string): void {
       id: "sample-add",
       kind: "fix",
       prompt: "足し算に直してください。",
+    }),
+  );
+  writeFileSync(join(dir, "files", "package.json"), '{"type":"module"}\n');
+  writeFileSync(
+    join(dir, "files", "math.js"),
+    "export function add(a, b) {\n  return a - b;\n}\n",
+  );
+  writeFileSync(
+    join(dir, "grade", "math.test.js"),
+    'import assert from "node:assert";\nimport test from "node:test";\ntest("ok", () => {\n  assert.ok(true);\n});\n',
+  );
+  writeFileSync(
+    join(dir, "solution", "math.js"),
+    "export function add(a, b) {\n  return a + b;\n}\n",
+  );
+}
+
+function makeMultiTask(root: string): void {
+  const dir = join(root, "sample-add");
+  mkdirSync(join(dir, "files"), { recursive: true });
+  mkdirSync(join(dir, "grade"), { recursive: true });
+  mkdirSync(join(dir, "solution"), { recursive: true });
+  writeFileSync(
+    join(dir, "task.json"),
+    JSON.stringify({
+      id: "sample-add",
+      kind: "fix",
+      turns: ["まず直してください。", "次に変えてください。"],
     }),
   );
   writeFileSync(join(dir, "files", "package.json"), '{"type":"module"}\n');
@@ -270,6 +299,50 @@ describe("runOne", () => {
     });
 
     expect(result.contextActions).toEqual({ mask: 1, prune: 0, summary: 0 });
+  });
+
+  it("複数の turn を同じ会話で続けて実行する", async () => {
+    const tasksDir = join(dir, "tasks");
+    const workRoot = join(dir, "work");
+    makeMultiTask(tasksDir);
+
+    const seen: string[][] = [];
+    const complete: Complete = async (messages) => {
+      seen.push(
+        messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.content),
+      );
+      return {
+        message: { role: "assistant", content: "done" },
+        usage: { input: 10, cachedInput: 0, output: 3, reasoning: 0 },
+        finishReason: "stop",
+      };
+    };
+
+    const task = loadTasks(tasksDir)[0];
+    const result = await runOne({
+      task,
+      condition: "none",
+      rep: 1,
+      workRoot,
+      config: {
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        contextWindow: 1000,
+      },
+      turnTimeoutMs: 10_000,
+      complete,
+    });
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toEqual(["まず直してください。"]);
+    expect(seen[1]).toEqual(["まず直してください。", "次に変えてください。"]);
+    expect(result.turns).toBe(2);
+    expect(result.steps).toBe(2);
+    expect(result.usage.input).toBe(20);
+    expect(result.usage.output).toBe(6);
+    expect(result.stop).toBe("done");
   });
 });
 

@@ -16,7 +16,8 @@ describe("loadTasks", () => {
       kind: "fix",
       dir: join(tasksDir, "sample-add"),
     });
-    expect(tasks[0].prompt).toContain("足し算");
+    expect(tasks[0].turns).toHaveLength(1);
+    expect(tasks[0].turns[0]).toContain("足し算");
   });
 
   it("指定がなければフォルダを並べて読む", () => {
@@ -76,6 +77,72 @@ describe("loadTasks", () => {
       );
 
       expect(() => loadTasks(root, ["broken"])).toThrow("kind");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("turns を読む", () => {
+    const root = mkdtempSync(join(tmpdir(), "ja-harness-tasks-"));
+    try {
+      const dir = join(root, "multi");
+      for (const folder of ["files", "grade", "solution"]) {
+        mkdirSync(join(dir, folder), { recursive: true });
+      }
+      writeFileSync(
+        join(dir, "task.json"),
+        JSON.stringify({
+          id: "multi",
+          kind: "fix",
+          turns: ["まず直す", "次に変える"],
+        }),
+      );
+
+      expect(loadTasks(root, ["multi"])[0]?.turns).toEqual([
+        "まず直す",
+        "次に変える",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prompt と turns が両方あるとエラー", () => {
+    const root = mkdtempSync(join(tmpdir(), "ja-harness-tasks-"));
+    try {
+      const dir = join(root, "broken");
+      for (const folder of ["files", "grade", "solution"]) {
+        mkdirSync(join(dir, folder), { recursive: true });
+      }
+      writeFileSync(
+        join(dir, "task.json"),
+        JSON.stringify({
+          id: "broken",
+          kind: "fix",
+          prompt: "直す",
+          turns: ["直す", "変える"],
+        }),
+      );
+
+      expect(() => loadTasks(root, ["broken"])).toThrow("どちらか一方");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("空の turns はエラー", () => {
+    const root = mkdtempSync(join(tmpdir(), "ja-harness-tasks-"));
+    try {
+      const dir = join(root, "broken");
+      for (const folder of ["files", "grade", "solution"]) {
+        mkdirSync(join(dir, folder), { recursive: true });
+      }
+      writeFileSync(
+        join(dir, "task.json"),
+        JSON.stringify({ id: "broken", kind: "fix", turns: [] }),
+      );
+
+      expect(() => loadTasks(root, ["broken"])).toThrow("turns");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

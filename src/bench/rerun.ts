@@ -69,6 +69,7 @@ export function parseResultsJson(text: string): BenchResultsFile {
     const actions = asRecord(record.contextActions);
     results.push({
       ...(record as BenchRecord),
+      turns: typeof record.turns === "number" ? record.turns : 1,
       contextActions: {
         mask: typeof actions.mask === "number" ? actions.mask : 0,
         prune: typeof actions.prune === "number" ? actions.prune : 0,
