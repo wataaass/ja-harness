@@ -9,6 +9,18 @@ export type SettingsTheme = "dark" | "light" | "auto";
 export type SettingsDetails = "brief" | "verbose";
 export type SettingsEnter = "send" | "newline";
 
+export type McpServerConfig = {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
+export type SettingsMcp = {
+  servers?: Record<string, McpServerConfig>;
+  enabled?: string[];
+  disabled?: string[];
+};
+
 export type Settings = {
   model?: string;
   effort?: SettingsEffort;
@@ -21,6 +33,7 @@ export type Settings = {
   };
   language?: { ui?: string };
   skills?: { disabled?: string[] };
+  mcp?: SettingsMcp;
 };
 
 export type LoadSettingsOptions = {
@@ -43,6 +56,7 @@ const TOP_KEYS = new Set([
   "ui",
   "language",
   "skills",
+  "mcp",
 ]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -201,6 +215,122 @@ function readFile(
         }
         break;
       }
+      case "mcp": {
+        if (!isObject(value)) {
+          warnings.push(messages.settings.notObject(path, key));
+          break;
+        }
+        const mcp: SettingsMcp = {};
+        for (const [name, item] of Object.entries(value)) {
+          if (name === "servers") {
+            if (!isObject(item)) {
+              warnings.push(messages.settings.notObject(path, "mcp.servers"));
+              continue;
+            }
+            const servers: Record<string, McpServerConfig> = {};
+            for (const [serverName, raw] of Object.entries(item)) {
+              const prefix = `mcp.servers.${serverName}`;
+              if (!isObject(raw)) {
+                warnings.push(messages.settings.notObject(path, prefix));
+                continue;
+              }
+              let command: string | undefined;
+              let commandWarned = false;
+              const args: string[] = [];
+              const env: Record<string, string> = {};
+              for (const [field, fieldValue] of Object.entries(raw)) {
+                if (field === "command") {
+                  if (
+                    typeof fieldValue === "string" &&
+                    fieldValue.trim() !== ""
+                  ) {
+                    command = fieldValue;
+                  } else {
+                    commandWarned = true;
+                    warnings.push(
+                      messages.settings.notString(path, `${prefix}.command`),
+                    );
+                  }
+                } else if (field === "args") {
+                  if (
+                    Array.isArray(fieldValue) &&
+                    fieldValue.every((entry) => typeof entry === "string")
+                  ) {
+                    args.push(...(fieldValue as string[]));
+                  } else {
+                    warnings.push(
+                      messages.settings.notStringArray(path, `${prefix}.args`),
+                    );
+                  }
+                } else if (field === "env") {
+                  if (!isObject(fieldValue)) {
+                    warnings.push(
+                      messages.settings.notObject(path, `${prefix}.env`),
+                    );
+                  } else {
+                    for (const [envName, envValue] of Object.entries(
+                      fieldValue,
+                    )) {
+                      if (typeof envValue === "string") {
+                        env[envName] = envValue;
+                      } else {
+                        warnings.push(
+                          messages.settings.notString(
+                            path,
+                            `${prefix}.env.${envName}`,
+                          ),
+                        );
+                      }
+                    }
+                  }
+                } else {
+                  warnings.push(
+                    messages.settings.unknown(path, `${prefix}.${field}`),
+                  );
+                }
+              }
+              if (command === undefined) {
+                if (!commandWarned) {
+                  warnings.push(
+                    messages.settings.notString(path, `${prefix}.command`),
+                  );
+                }
+                continue;
+              }
+              servers[serverName] = {
+                command,
+                ...(args.length === 0 ? {} : { args }),
+                ...(Object.keys(env).length === 0 ? {} : { env }),
+              };
+            }
+            if (Object.keys(servers).length > 0) {
+              mcp.servers = servers;
+            }
+          } else if (name === "enabled" || name === "disabled") {
+            if (
+              Array.isArray(item) &&
+              item.every((entry) => typeof entry === "string")
+            ) {
+              const list = item.filter(
+                (entry) => (entry as string).trim() !== "",
+              ) as string[];
+              if (list.length > 0) {
+                mcp[name] = list;
+              }
+            } else {
+              warnings.push(
+                messages.settings.notStringArray(path, `mcp.${name}`),
+              );
+            }
+          } else {
+            warnings.push(messages.settings.unknown(path, `mcp.${name}`));
+          }
+        }
+        if (Object.keys(mcp).length > 0) {
+          values.mcp = mcp;
+        }
+        break;
+      }
       case "language": {
         if (!isObject(value)) {
           warnings.push(messages.settings.notObject(path, key));
@@ -247,6 +377,23 @@ function merge(base: Settings, next: Settings): Settings {
       ]),
     ];
     merged.skills = disabled.length > 0 ? { disabled } : {};
+  }
+  if (base.mcp !== undefined || next.mcp !== undefined) {
+    const servers = { ...base.mcp?.servers, ...next.mcp?.servers };
+    const enabled = [
+      ...new Set([...(base.mcp?.enabled ?? []), ...(next.mcp?.enabled ?? [])]),
+    ];
+    const disabled = [
+      ...new Set([
+        ...(base.mcp?.disabled ?? []),
+        ...(next.mcp?.disabled ?? []),
+      ]),
+    ];
+    merged.mcp = {
+      ...(Object.keys(servers).length === 0 ? {} : { servers }),
+      ...(enabled.length === 0 ? {} : { enabled }),
+      ...(disabled.length === 0 ? {} : { disabled }),
+    };
   }
   return merged;
 }

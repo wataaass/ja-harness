@@ -1,9 +1,11 @@
 import type { Tool } from "../agent/loop.js";
 import type { Skill } from "../agent/skills.js";
+import type { McpHub } from "../mcp/hub.js";
 import type { Confirm } from "./confirm.js";
 import { createEditTool } from "./edit.js";
 import { createGrepTool } from "./grep.js";
 import { createListTool } from "./list.js";
+import { createMcpTool } from "./mcp.js";
 import { createPlanTool, type PlanHandler } from "./plan.js";
 import { createReadTool } from "./read.js";
 import { createShellTool } from "./shell.js";
@@ -17,6 +19,7 @@ export type ToolsOptions = {
   beforeWrite?: (absPath: string) => void;
   plan?: PlanHandler;
   skills?: Skill[];
+  mcp?: McpHub;
 };
 
 export function createTools(
@@ -37,5 +40,8 @@ export function createTools(
     ...(opts.skills === undefined || opts.skills.length === 0
       ? []
       : [createSkillTool(opts.skills)]),
+    ...(opts.mcp === undefined || opts.mcp.tools.length === 0
+      ? []
+      : [createMcpTool(opts.mcp, confirm)]),
   ];
 }

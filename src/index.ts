@@ -22,7 +22,10 @@ import { createFileSaver, limitToolResult } from "./context/spill.js";
 import { createEstimator } from "./context/tokens.js";
 import { createClient } from "./llm/openai.js";
 import type { Message } from "./llm/types.js";
+import { connectMcp } from "./mcp/hub.js";
+import { resolveServers } from "./mcp/servers.js";
 import { createTools } from "./tools/index.js";
+import { formatMcpList } from "./tools/mcp.js";
 import { runApp } from "./ui/app.js";
 import { formatVersion, VERSION } from "./version.js";
 
@@ -129,6 +132,13 @@ async function main(): Promise<number> {
     home,
     env: process.env,
   });
+  const mcpServers = resolveServers(settings.mcp, {
+    onWarning: (warning) => process.stderr.write(`${warning}\n`),
+  });
+  const hub = await connectMcp(mcpServers, { cwd: process.cwd() });
+  for (const warning of hub.warnings) {
+    process.stderr.write(`${warning}\n`);
+  }
   const instructions = loadInstructions({ cwd: process.cwd(), home });
   const skills = loadSkills({
     cwd: process.cwd(),
@@ -157,7 +167,10 @@ async function main(): Promise<number> {
     {
       role: "system",
       content:
-        SYSTEM_PROMPT + instructions.text + formatSkillList(skills.skills),
+        SYSTEM_PROMPT +
+        instructions.text +
+        formatSkillList(skills.skills) +
+        formatMcpList(hub.tools),
     },
     { role: "user", content: instruction },
   ];
@@ -177,7 +190,7 @@ async function main(): Promise<number> {
           isTTY: process.stdin.isTTY === true,
           onInterrupt: () => controller.abort(),
         }),
-        { skills: skills.skills },
+        { skills: skills.skills, mcp: hub },
       ),
       messages,
       signal: controller.signal,
@@ -220,6 +233,7 @@ async function main(): Promise<number> {
     process.stderr.write(`エラー: ${message}\n`);
     return 1;
   } finally {
+    await hub.close();
     process.off("SIGINT", onSigint);
   }
 }

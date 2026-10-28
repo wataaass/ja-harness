@@ -4,6 +4,7 @@ export type ConfirmRequest = {
   detail: string;
   outside?: boolean;
   hunks?: string[][];
+  key?: string;
 };
 
 export type Decision = {

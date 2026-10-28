@@ -45,9 +45,12 @@ import { createFileSaver, limitToolResult } from "../context/spill.js";
 import { createEstimator, estimateMessages } from "../context/tokens.js";
 import { findModel, MODELS, type ModelInfo } from "../llm/models.js";
 import type { Message, ToolSpec, Usage } from "../llm/types.js";
+import { connectMcp, type McpHub } from "../mcp/hub.js";
+import { type ResolvedServer, resolveServers } from "../mcp/servers.js";
 import type { Confirm, ConfirmRequest, Decision } from "../tools/confirm.js";
 import { computeHunks, formatHunk } from "../tools/hunks.js";
 import { createTools, type PlanHandler } from "../tools/index.js";
+import { formatMcpList } from "../tools/mcp.js";
 import { renderCard } from "./card.js";
 import { type CheckpointFile, createCheckpoints } from "./checkpoints.js";
 import { applyKey, type EditorState, renderEditor } from "./editor.js";
@@ -117,6 +120,7 @@ export type AppOptions = {
   home?: string;
   makeComplete: (model: string, effort?: string) => Complete;
   createTools?: (confirm: Confirm, plan?: PlanHandler) => Tool[];
+  connectMcp?: typeof connectMcp;
   contextWindow: number;
   model: string;
   effort?: string;
@@ -225,7 +229,7 @@ function addUsage(total: Usage, usage: Usage): Usage {
 }
 
 function confirmKey(request: ConfirmRequest): string {
-  return `${request.tool}\u0000${request.detail}`;
+  return request.key ?? `${request.tool}\u0000${request.detail}`;
 }
 
 function errorMessage(error: unknown): string {
@@ -271,6 +275,14 @@ function sessionRow(session: SessionSummary, messages: Messages): string {
 export async function runApp(o: AppOptions): Promise<number> {
   const timing = { ...DEFAULT_TIMING, ...o.timing };
   const screen = createScreen(o.output);
+  let booting = true;
+  const earlyChunks: (string | Buffer)[] = [];
+  const onEarlyData = (chunk: string | Buffer): void => {
+    if (booting) {
+      earlyChunks.push(chunk);
+    }
+  };
+  o.input.on("data", onEarlyData);
   const home = o.home ?? o.cwd;
   const { settings, warnings } = loadSettings({
     cwd: o.cwd,
@@ -288,8 +300,25 @@ export async function runApp(o: AppOptions): Promise<number> {
           ?.disabled ?? [],
     });
   let skillState = loadSkillState();
+  let mcpServers = resolveServers(settings.mcp, {
+    onWarning: (warning) => warnings.push(warning),
+  });
+  let hub: McpHub = mcpServers.some((server) => server.enabled)
+    ? await (o.connectMcp ?? connectMcp)(mcpServers, { cwd: o.cwd })
+    : {
+        tools: [],
+        warnings: [],
+        async call() {
+          throw new Error("MCP is not connected.");
+        },
+        async close() {},
+      };
+  warnings.push(...hub.warnings);
   let systemContent =
-    SYSTEM_PROMPT + instructions.text + formatSkillList(skillState.skills);
+    SYSTEM_PROMPT +
+    instructions.text +
+    formatSkillList(skillState.skills) +
+    formatMcpList(hub.tools);
   const theme = createTheme({
     env: o.env,
     isTTY: o.output.isTTY ?? o.input.isTTY ?? false,
@@ -483,8 +512,67 @@ export async function runApp(o: AppOptions): Promise<number> {
           plan: planFn,
           beforeWrite: (abs) => checkpoints.recordBefore(abs),
           skills: skillState.skills,
+          mcp: hub,
         }))
     )(confirmWithPermission, planHandler);
+  }
+
+  function enabledServersKey(servers: ResolvedServer[]): string {
+    return JSON.stringify(
+      servers
+        .filter((server) => server.enabled)
+        .map((server) => [server.name, server.config])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    );
+  }
+
+  function rebuildSystemContent(): void {
+    systemContent =
+      SYSTEM_PROMPT +
+      loadInstructions({ cwd: o.cwd, home }).text +
+      formatSkillList(skillState.skills) +
+      formatMcpList(hub.tools);
+  }
+
+  function resetConversation(): void {
+    conversation.splice(0, conversation.length, {
+      role: "system",
+      content: systemContent,
+    });
+    sessionUsage = zeroUsage();
+    turnUsage = zeroUsage();
+    lastStepInput = 0;
+    newSession();
+    emit([messages.app.cleared]);
+  }
+
+  async function reconnectMcp(
+    nextServers: ResolvedServer[],
+    nextWarnings: string[],
+  ): Promise<void> {
+    busy = true;
+    render();
+    try {
+      await hub.close();
+      hub = await (o.connectMcp ?? connectMcp)(nextServers, { cwd: o.cwd });
+      mcpServers = nextServers;
+      for (const text of [...nextWarnings, ...hub.warnings]) {
+        emit([theme.warn(` ${text}`)]);
+      }
+      rebuildSystemContent();
+      resetConversation();
+    } catch (error) {
+      if (!closed) {
+        emit([
+          theme.error(` ✕ ${errorMessage(error).split(/\r?\n/)[0] ?? ""}`),
+        ]);
+      }
+    } finally {
+      if (!closed) {
+        busy = false;
+        render();
+      }
+    }
   }
 
   function toolSpecs(): ToolSpec[] {
@@ -1175,6 +1263,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       );
     }
     abort?.abort();
+    void hub.close();
     o.input.off?.("data", onData);
     o.output.off?.("resize", onResize);
     process.off("exit", restoreTerminal);
@@ -2125,19 +2214,24 @@ export async function runApp(o: AppOptions): Promise<number> {
       }
       case "/clear": {
         skillState = loadSkillState();
-        systemContent =
-          SYSTEM_PROMPT +
-          loadInstructions({ cwd: o.cwd, home }).text +
-          formatSkillList(skillState.skills);
-        conversation.splice(0, conversation.length, {
-          role: "system",
-          content: systemContent,
+        const nextSettings = loadSettings({
+          cwd: o.cwd,
+          home,
+          env: o.env,
+        }).settings;
+        const nextWarnings: string[] = [];
+        const nextServers = resolveServers(nextSettings.mcp, {
+          onWarning: (warning) => nextWarnings.push(warning),
         });
-        sessionUsage = zeroUsage();
-        turnUsage = zeroUsage();
-        lastStepInput = 0;
-        newSession();
-        emit([messages.app.cleared]);
+        if (enabledServersKey(nextServers) !== enabledServersKey(mcpServers)) {
+          void reconnectMcp(nextServers, nextWarnings);
+          return true;
+        }
+        for (const text of nextWarnings) {
+          emit([theme.warn(` ${text}`)]);
+        }
+        rebuildSystemContent();
+        resetConversation();
         return true;
       }
       case "/compact":
@@ -2705,7 +2799,12 @@ export async function runApp(o: AppOptions): Promise<number> {
   booted = true;
   render();
 
+  booting = false;
+  o.input.off?.("data", onEarlyData);
   o.input.on("data", onData);
+  for (const chunk of earlyChunks.splice(0)) {
+    onData(chunk);
+  }
   o.output.on?.("resize", onResize);
 
   return finished;

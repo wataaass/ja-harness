@@ -32,6 +32,12 @@ describe("permissions", () => {
     expect(needsConfirm("auto-all", { tool: "shell" })).toBe(false);
   });
 
+  it("mcp は auto-all 以外で聞く", () => {
+    expect(needsConfirm("ask", { tool: "mcp" })).toBe(true);
+    expect(needsConfirm("auto-edit", { tool: "mcp" })).toBe(true);
+    expect(needsConfirm("auto-all", { tool: "mcp" })).toBe(false);
+  });
+
   it("作業フォルダの外はどの権限でも聞く", () => {
     expect(needsConfirm("auto-edit", { tool: "edit", outside: true })).toBe(
       true,

@@ -13,6 +13,8 @@ export const ja = {
   instructions: (labels: string) => ` Instructions: ${labels}`,
   instructionsTruncated: " 決まりのファイルが長いので、12,000字で切りました",
   skills: (on: number, off: number) => ` Skills: ${on} on, ${off} off`,
+  mcpInvalidName: (name: string) =>
+    `MCP サーバー名 ${name} は使えません（英数字・-・_ だけ）`,
 
   modes: {
     run: "Agent",
