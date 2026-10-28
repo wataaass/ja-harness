@@ -708,9 +708,9 @@ describe("createContextManager", () => {
       window: 5,
       minTokens: 300,
       maxCallsAhead: 10,
-      margin: 1,
+      margin: 2,
       rereadStale: 0.1,
-      rereadPrevious: 0.3,
+      rereadPrevious: 0.4,
     });
   });
 

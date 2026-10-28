@@ -28,7 +28,7 @@ const BENCH_HELP = `使い方: ja-harness bench [オプション]
   --models a,b          --sim で使うモデル
   --scenarios a,b       --sim で使う台本（short,medium,long,read-heavy）
   --context JSON        文脈管理の設定を深く上書きする
-  --prev-need P         --sim で前のやりとりの結果を読む確率（既定0.3）
+  --prev-need P         --sim で前のやりとりの結果を読む確率（既定0.4）
   --cache-ttl N         --sim のキャッシュの寿命（秒、既定3600）
   -h, --help            この使い方
 `;

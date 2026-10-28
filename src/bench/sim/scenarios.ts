@@ -519,7 +519,7 @@ function readHeavyScenario(seed: number, prevNeed: number): Scenario {
 }
 
 export function makeScenarios(o: { prevNeed?: number } = {}): Scenario[] {
-  const prevNeed = o.prevNeed ?? 0.3;
+  const prevNeed = o.prevNeed ?? 0.4;
   return [
     shortScenario(0x51a7, prevNeed),
     mediumScenario(0x8e21, prevNeed),

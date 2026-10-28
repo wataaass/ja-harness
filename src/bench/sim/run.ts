@@ -605,7 +605,7 @@ export async function runSimulation(
   const conditions = options.conditions ?? [...CONDITIONS];
   const scenarios = resolveScenarios(options.scenarios, options.prevNeed);
   const cacheTtlSeconds = options.cacheTtlSeconds ?? 3600;
-  const prevNeed = options.prevNeed ?? 0.3;
+  const prevNeed = options.prevNeed ?? 0.4;
   const context = mergeContext(options.context);
   const resultsDir = options.resultsDir ?? "bench/results";
   const now = options.now ?? new Date();
