@@ -38,14 +38,17 @@ import {
 import {
   loadSettings,
   readDisabledSkills,
+  splitArgs,
   updateDisabledSkills,
+  updateMcpServer,
+  updateMcpToggles,
 } from "../cli/settings.js";
 import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
 import { createEstimator, estimateMessages } from "../context/tokens.js";
 import { findModel, MODELS, type ModelInfo } from "../llm/models.js";
 import type { Message, ToolSpec, Usage } from "../llm/types.js";
-import { connectMcp, type McpHub } from "../mcp/hub.js";
+import { connectMcp, type McpHub, type McpToolInfo } from "../mcp/hub.js";
 import { type ResolvedServer, resolveServers } from "../mcp/servers.js";
 import type { Confirm, ConfirmRequest, Decision } from "../tools/confirm.js";
 import { computeHunks, formatHunk } from "../tools/hunks.js";
@@ -167,12 +170,18 @@ type SkillPickerItem = {
   locked: boolean;
 };
 
+type McpPickerItem = {
+  server: ResolvedServer;
+  enabled: boolean;
+};
+
 type Picker =
   | { kind: "mode"; index: number }
   | { kind: "permission"; index: number }
   | { kind: "model"; modelIndex: number; effortIndex: number }
   | { kind: "session"; sessions: SessionSummary[]; index: number }
-  | { kind: "skills"; items: SkillPickerItem[]; index: number };
+  | { kind: "skills"; items: SkillPickerItem[]; index: number }
+  | { kind: "mcp"; items: McpPickerItem[]; index: number };
 
 type Warning = {
   text: string;
@@ -203,6 +212,7 @@ function commands(): Command[] {
     { name: "/undo" },
     { name: "/resume" },
     { name: "/skills" },
+    { name: "/mcp" },
     { name: "/clear" },
     { name: "/compact" },
     { name: "/summarize" },
@@ -272,6 +282,16 @@ function sessionRow(session: SessionSummary, messages: Messages): string {
   );
 }
 
+function mcpToolTokens(
+  tools: McpToolInfo[],
+  estimate: (text: string) => number,
+): number {
+  const lines = formatMcpList(tools)
+    .split("\n")
+    .filter((line) => line.startsWith("- "));
+  return estimate(lines.join("\n"));
+}
+
 export async function runApp(o: AppOptions): Promise<number> {
   const timing = { ...DEFAULT_TIMING, ...o.timing };
   const screen = createScreen(o.output);
@@ -300,9 +320,18 @@ export async function runApp(o: AppOptions): Promise<number> {
           ?.disabled ?? [],
     });
   let skillState = loadSkillState();
+  const messages = getMessages(o.lang ?? settings.language?.ui);
   let mcpServers = resolveServers(settings.mcp, {
     onWarning: (warning) => warnings.push(warning),
   });
+  const enabledMcpNames = mcpServers
+    .filter((server) => server.enabled)
+    .map((server) => server.name);
+  if (enabledMcpNames.length > 0) {
+    o.output.write(
+      `${messages.app.mcpConnecting(enabledMcpNames.join(", "))}\r\n`,
+    );
+  }
   let hub: McpHub = mcpServers.some((server) => server.enabled)
     ? await (o.connectMcp ?? connectMcp)(mcpServers, { cwd: o.cwd })
     : {
@@ -325,7 +354,6 @@ export async function runApp(o: AppOptions): Promise<number> {
     ...(settings.ui?.theme === "dark" ? { dark: true } : {}),
     ...(settings.ui?.theme === "light" ? { dark: false } : {}),
   });
-  const messages = getMessages(o.lang ?? settings.language?.ui);
   const commandList = commands();
   const history = createHistory();
   const estimate = createEstimator();
@@ -551,7 +579,14 @@ export async function runApp(o: AppOptions): Promise<number> {
     nextWarnings: string[],
   ): Promise<void> {
     busy = true;
-    render();
+    const names = nextServers
+      .filter((server) => server.enabled)
+      .map((server) => server.name);
+    if (names.length === 0) {
+      render();
+    } else {
+      emit([messages.app.mcpConnecting(names.join(", "))]);
+    }
     try {
       await hub.close();
       hub = await (o.connectMcp ?? connectMcp)(nextServers, { cwd: o.cwd });
@@ -705,6 +740,35 @@ export async function runApp(o: AppOptions): Promise<number> {
       });
       return renderCard({
         title: messages.app.picker.skillsTitle,
+        body,
+        footer: messages.app.picker.skillsFooter,
+        width: maxWidth,
+        theme,
+      });
+    }
+    if (current.kind === "mcp") {
+      const body = current.items.map((item, index) => {
+        const mark = item.enabled ? "[x]" : "[ ]";
+        const tools = hub.tools.filter(
+          (tool) => tool.server === item.server.name,
+        );
+        const info =
+          tools.length === 0
+            ? messages.app.picker.mcpNoTools
+            : messages.app.picker.mcpTools(
+                String(tools.length),
+                String(mcpToolTokens(tools, estimate)),
+              );
+        const text = messages.app.picker.mcpRow(
+          mark,
+          item.server.name,
+          item.server.source,
+          info,
+        );
+        return index === current.index ? theme.accent(text) : text;
+      });
+      return renderCard({
+        title: messages.app.picker.mcpTitle,
         body,
         footer: messages.app.picker.skillsFooter,
         width: maxWidth,
@@ -1665,6 +1729,46 @@ export async function runApp(o: AppOptions): Promise<number> {
       return;
     }
 
+    if (picker.kind === "mcp") {
+      const length = picker.items.length;
+      if (length === 0) {
+        if (key.type === "enter") {
+          picker = undefined;
+          saveMcpToggles([], []);
+        }
+        return;
+      }
+      if (key.type === "up") {
+        picker.index = (picker.index - 1 + length) % length;
+        render();
+        return;
+      }
+      if (key.type === "down") {
+        picker.index = (picker.index + 1) % length;
+        render();
+        return;
+      }
+      if (key.type === "char" && key.text.includes(" ")) {
+        const item = picker.items[picker.index];
+        if (item !== undefined) {
+          item.enabled = !item.enabled;
+        }
+        render();
+        return;
+      }
+      if (key.type === "enter") {
+        const enabled = picker.items
+          .filter((item) => item.enabled)
+          .map((item) => item.server.name);
+        const disabled = picker.items
+          .filter((item) => !item.enabled)
+          .map((item) => item.server.name);
+        picker = undefined;
+        saveMcpToggles(enabled, disabled);
+      }
+      return;
+    }
+
     if (picker.kind === "mode" || picker.kind === "permission") {
       const length = picker.kind === "mode" ? MODES.length : PERMISSIONS.length;
       if (key.type === "up") {
@@ -1925,6 +2029,65 @@ export async function runApp(o: AppOptions): Promise<number> {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, next, "utf8");
       emit([messages.app.picker.skillsSaved]);
+    } catch (error) {
+      emit([theme.warn(` ${errorMessage(error)}`)]);
+    }
+  }
+
+  function openMcpPicker(): void {
+    const { settings: current } = loadSettings({
+      cwd: o.cwd,
+      home,
+      env: o.env,
+    });
+    const items = resolveServers(current.mcp).map((server) => ({
+      server,
+      enabled: server.enabled,
+    }));
+    picker = { kind: "mcp", items, index: 0 };
+    render();
+  }
+
+  function saveMcpToggles(enabled: string[], disabled: string[]): void {
+    const path = join(home, ".ja-harness", "config.json");
+    let text: string | undefined;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        emit([theme.error(` ✕ ${messages.settings.unreadable(path)}`)]);
+        return;
+      }
+    }
+    try {
+      const next = updateMcpToggles(text, enabled, disabled);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, next, "utf8");
+      emit([messages.app.picker.mcpSaved]);
+    } catch (error) {
+      emit([theme.warn(` ${errorMessage(error)}`)]);
+    }
+  }
+
+  function addMcpServer(name: string, command: string, args: string[]): void {
+    const path = join(home, ".ja-harness", "config.json");
+    let text: string | undefined;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        emit([theme.error(` ✕ ${messages.settings.unreadable(path)}`)]);
+        return;
+      }
+    }
+    try {
+      const next = updateMcpServer(text, name, {
+        command,
+        ...(args.length === 0 ? {} : { args }),
+      });
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, next, "utf8");
+      emit([messages.app.mcpAdd.added(name)]);
     } catch (error) {
       emit([theme.warn(` ${errorMessage(error)}`)]);
     }
@@ -2210,6 +2373,25 @@ export async function runApp(o: AppOptions): Promise<number> {
           return true;
         }
         openSkillsPicker();
+        return true;
+      }
+      case "/mcp": {
+        if (arg === "add" || arg.startsWith("add ")) {
+          const raw = text.slice(1).trim();
+          const tokens = splitArgs(raw.replace(/^mcp\s+add\b\s*/, ""));
+          const [name, command, ...args] = tokens;
+          if (name === undefined || command === undefined) {
+            emit([messages.app.mcpAdd.usage]);
+            return true;
+          }
+          if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+            emit([theme.warn(` ${messages.mcpInvalidName(name)}`)]);
+            return true;
+          }
+          addMcpServer(name, command, args);
+          return true;
+        }
+        openMcpPicker();
         return true;
       }
       case "/clear": {

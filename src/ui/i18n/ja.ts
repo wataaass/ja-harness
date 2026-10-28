@@ -95,7 +95,7 @@ export const ja = {
     "  Shift+Tab mode  Ctrl+O details  Ctrl+R review  Ctrl+C clear input  Ctrl+D twice to exit",
     "  Esc stop/close  Tab complete",
     " Commands",
-    "  /help /mode /permission /model /details /undo /resume /skills /clear /compact /summarize /context",
+    "  /help /mode /permission /model /details /undo /resume /skills /mcp /clear /compact /summarize /context",
   ],
 
   app: {
@@ -123,6 +123,7 @@ export const ja = {
     noPreviousSession: " No previous session",
     cleared: " 会話を空にしました（前のものは /resume で続けられます）",
     unknownCommand: (command: string) => ` Unknown command: ${command}`,
+    mcpConnecting: (names: string) => `MCP: ${names} につないでいます…`,
     details: {
       on: "verbose",
       off: "brief",
@@ -168,6 +169,18 @@ export const ja = {
       skillsRow: (mark: string, name: string, source: string, tokens: string) =>
         `${mark} ${name}  ${source}  ~${tokens} tokens`,
       skillsSaved: " 保存しました。次の /clear か起動から効きます",
+      mcpTitle: "MCP",
+      mcpRow: (mark: string, name: string, source: string, tools: string) =>
+        `${mark} ${name}  ${source}  ${tools}`,
+      mcpTools: (count: string, tokens: string) =>
+        `${count} tools  ~${tokens} tokens`,
+      mcpNoTools: "-",
+      mcpSaved: " 保存しました。次の /clear か起動から効きます",
+    },
+    mcpAdd: {
+      usage: " /mcp add <名前> <command> [args...]",
+      added: (name: string) =>
+        ` 追加しました（${name}）。次の /clear か起動から効きます`,
     },
     skillsInstall: {
       title: "Install skills",

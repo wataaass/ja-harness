@@ -467,6 +467,128 @@ export function updateDisabledSkills(
   return `${JSON.stringify(next, null, 2)}\n`;
 }
 
+export function readMcpToggles(path: string): {
+  enabled: string[];
+  disabled: string[];
+} {
+  const empty = { enabled: [], disabled: [] };
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return empty;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return empty;
+  }
+  if (!isObject(parsed) || !isObject(parsed.mcp)) {
+    return empty;
+  }
+  const read = (value: unknown): string[] => {
+    if (
+      !Array.isArray(value) ||
+      !value.every((entry) => typeof entry === "string")
+    ) {
+      return [];
+    }
+    return value.filter((entry) => entry.trim() !== "");
+  };
+  return {
+    enabled: read(parsed.mcp.enabled),
+    disabled: read(parsed.mcp.disabled),
+  };
+}
+
+export function updateMcpToggles(
+  jsonText: string | undefined,
+  enabled: string[],
+  disabled: string[],
+): string {
+  const messages = getMessages();
+  let parsed: unknown = {};
+  if (jsonText !== undefined) {
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      throw new Error(messages.settings.brokenSave);
+    }
+  }
+  if (!isObject(parsed)) {
+    throw new Error(messages.settings.shapeSave);
+  }
+  const next = { ...parsed };
+  const mcp = isObject(next.mcp) ? { ...next.mcp } : {};
+  mcp.enabled = enabled;
+  mcp.disabled = disabled;
+  next.mcp = mcp;
+  return `${JSON.stringify(next, null, 2)}\n`;
+}
+
+export function splitArgs(text: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quoted = false;
+  let started = false;
+  for (const ch of text) {
+    if (ch === '"') {
+      quoted = !quoted;
+      started = true;
+      continue;
+    }
+    if (!quoted && /\s/.test(ch)) {
+      if (started) {
+        args.push(current);
+        current = "";
+        started = false;
+      }
+      continue;
+    }
+    current += ch;
+    started = true;
+  }
+  if (started) {
+    args.push(current);
+  }
+  return args;
+}
+
+export function updateMcpServer(
+  jsonText: string | undefined,
+  name: string,
+  config: McpServerConfig,
+): string {
+  const messages = getMessages();
+  let parsed: unknown = {};
+  if (jsonText !== undefined) {
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      throw new Error(messages.settings.brokenSave);
+    }
+  }
+  if (!isObject(parsed)) {
+    throw new Error(messages.settings.shapeSave);
+  }
+  const next = { ...parsed };
+  const mcp = isObject(next.mcp) ? { ...next.mcp } : {};
+  const servers = isObject(mcp.servers) ? { ...mcp.servers } : {};
+  servers[name] = {
+    command: config.command,
+    ...(config.args === undefined || config.args.length === 0
+      ? {}
+      : { args: config.args }),
+    ...(config.env === undefined || Object.keys(config.env).length === 0
+      ? {}
+      : { env: config.env }),
+  };
+  mcp.servers = servers;
+  next.mcp = mcp;
+  return `${JSON.stringify(next, null, 2)}\n`;
+}
+
 export function loadSettings(o: LoadSettingsOptions): {
   settings: Settings;
   warnings: string[];

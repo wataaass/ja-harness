@@ -2,7 +2,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadSettings, updateDisabledSkills } from "../src/cli/settings.js";
+import {
+  loadSettings,
+  readMcpToggles,
+  splitArgs,
+  updateDisabledSkills,
+  updateMcpServer,
+  updateMcpToggles,
+} from "../src/cli/settings.js";
 
 const dirs: string[] = [];
 
@@ -265,5 +272,133 @@ describe("updateDisabledSkills", () => {
       ui: { theme: "light" },
       skills: { disabled: ["new"] },
     });
+  });
+});
+
+describe("readMcpToggles", () => {
+  it("ファイルがなければ空", () => {
+    expect(
+      readMcpToggles(join(makeDir("ja-mcp-home-"), "config.json")),
+    ).toEqual({ enabled: [], disabled: [] });
+  });
+
+  it("壊れた JSON は空", () => {
+    const path = writeConfig(makeDir("ja-mcp-home-"), "{");
+    expect(readMcpToggles(path)).toEqual({ enabled: [], disabled: [] });
+  });
+
+  it("mcp.enabled と mcp.disabled を読む", () => {
+    const path = writeConfig(
+      makeDir("ja-mcp-home-"),
+      JSON.stringify({
+        model: "demo",
+        mcp: { enabled: ["a", ""], disabled: ["b"] },
+      }),
+    );
+    expect(readMcpToggles(path)).toEqual({
+      enabled: ["a"],
+      disabled: ["b"],
+    });
+  });
+});
+
+describe("updateMcpToggles", () => {
+  it("ファイルがなければ mcp の enabled と disabled だけを作る", () => {
+    const output = updateMcpToggles(undefined, ["a"], ["b"]);
+
+    expect(JSON.parse(output)).toEqual({
+      mcp: { enabled: ["a"], disabled: ["b"] },
+    });
+  });
+
+  it("ほかのキーと mcp.servers を残して置き換える", () => {
+    const output = updateMcpToggles(
+      JSON.stringify({
+        model: "home-model",
+        mcp: {
+          servers: { demo: { command: "node" } },
+          enabled: ["old"],
+          disabled: ["old2"],
+        },
+      }),
+      ["new"],
+      ["new2"],
+    );
+
+    expect(JSON.parse(output)).toEqual({
+      model: "home-model",
+      mcp: {
+        servers: { demo: { command: "node" } },
+        enabled: ["new"],
+        disabled: ["new2"],
+      },
+    });
+  });
+
+  it("壊れた JSON は保存しない", () => {
+    expect(() => updateMcpToggles("{", [], [])).toThrow(
+      "設定ファイルが壊れているので保存しません（JSON として読めません）",
+    );
+  });
+});
+
+describe("splitArgs", () => {
+  it("空白で分け、連続する空白はまとめる", () => {
+    expect(splitArgs("  npx   textlint   --mcp ")).toEqual([
+      "npx",
+      "textlint",
+      "--mcp",
+    ]);
+  });
+
+  it("ダブルクォートで囲んだ部分を1つの引数にする", () => {
+    expect(
+      splitArgs('node "C:\\Program Files\\demo server.mjs" --flag'),
+    ).toEqual(["node", "C:\\Program Files\\demo server.mjs", "--flag"]);
+  });
+
+  it("空文字は空の配列", () => {
+    expect(splitArgs("  ")).toEqual([]);
+  });
+});
+
+describe("updateMcpServer", () => {
+  it("ファイルがなければ mcp.servers に足す", () => {
+    const output = updateMcpServer(undefined, "demo", {
+      command: "node",
+      args: ["server.mjs"],
+    });
+
+    expect(JSON.parse(output)).toEqual({
+      mcp: { servers: { demo: { command: "node", args: ["server.mjs"] } } },
+    });
+  });
+
+  it("args が空なら書かず、同じ名前は上書きする", () => {
+    const output = updateMcpServer(
+      JSON.stringify({
+        model: "home-model",
+        mcp: {
+          servers: { demo: { command: "old", args: ["old"] } },
+          enabled: ["demo"],
+        },
+      }),
+      "demo",
+      { command: "new", args: [] },
+    );
+
+    expect(JSON.parse(output)).toEqual({
+      model: "home-model",
+      mcp: {
+        servers: { demo: { command: "new" } },
+        enabled: ["demo"],
+      },
+    });
+  });
+
+  it("壊れた JSON は保存しない", () => {
+    expect(() => updateMcpServer("{", "demo", { command: "node" })).toThrow(
+      "設定ファイルが壊れているので保存しません（JSON として読めません）",
+    );
   });
 });

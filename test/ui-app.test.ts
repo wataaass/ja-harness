@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Complete, Tool } from "../src/agent/loop.js";
 import type { Completion, Message, Usage } from "../src/llm/types.js";
+import type { connectMcp, McpToolInfo } from "../src/mcp/hub.js";
 import type { Confirm, Decision } from "../src/tools/confirm.js";
 import { runApp } from "../src/ui/app.js";
 import {
@@ -143,6 +144,7 @@ function start(options: {
   continueLatest?: boolean;
   env?: NodeJS.ProcessEnv;
   isTTY?: boolean;
+  connectMcp?: typeof connectMcp;
 }) {
   const input = new FakeInput();
   const output = new FakeOutput();
@@ -180,6 +182,9 @@ function start(options: {
     ...(options.continueLatest === undefined
       ? {}
       : { continueLatest: options.continueLatest }),
+    ...(options.connectMcp === undefined
+      ? {}
+      : { connectMcp: options.connectMcp }),
   });
   return { input, output, result };
 }
@@ -1895,6 +1900,189 @@ describe("runApp のスキル", () => {
         "name: added",
       );
       expect(existsSync(join(dir, "extra.txt"))).toBe(true);
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+function mcpTool(
+  server: string,
+  name: string,
+  description: string,
+): McpToolInfo {
+  return {
+    server,
+    name,
+    fullName: `${server}.${name}`,
+    description,
+    inputSchema: { type: "object" },
+  };
+}
+
+function fakeMcp(tools: McpToolInfo[] = []): typeof connectMcp {
+  return async () => ({
+    tools,
+    warnings: [],
+    call: async () => "",
+    close: async () => {},
+  });
+}
+
+describe("runApp の MCP", () => {
+  it("/mcp で一覧を出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writeSettingsConfig(home, {
+        mcp: { servers: { demo: { command: "node" } } },
+      });
+      const { complete } = sequence([]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        cwd,
+        connectMcp: fakeMcp(),
+      });
+
+      input.send("/mcp\r");
+      await waitFor(output, "MCP");
+      await waitFor(output, "[ ] nihongo-kit  builtin  -");
+      await waitFor(output, "[x] demo  config  -");
+      input.send("\x1b");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("つながっているサーバーは道具の数とトークンを出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writeSettingsConfig(home, { mcp: { enabled: ["nihongo-kit"] } });
+      const tools = [mcpTool("nihongo-kit", "check", "日本語を点検します。")];
+      const { complete } = sequence([]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        cwd,
+        connectMcp: fakeMcp(tools),
+      });
+
+      input.send("/mcp\r");
+      await waitFor(output, "[x] nihongo-kit  builtin  1 tools");
+      input.send("\x1b");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("Space で切り替えて Enter で個人の設定に保存する", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("/mcp\r");
+      await waitFor(output, "[ ] nihongo-kit");
+      input.send(" ");
+      await waitFor(output, "[x] nihongo-kit");
+      input.send("\r");
+      await waitFor(output, "保存しました。次の /clear か起動から効きます");
+
+      const path = join(home, ".ja-harness", "config.json");
+      const saved = JSON.parse(readFileSync(path, "utf8")) as {
+        mcp: { enabled: string[]; disabled: string[] };
+      };
+      expect(saved.mcp.enabled).toEqual(["nihongo-kit"]);
+      expect(saved.mcp.disabled).toEqual([]);
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("Esc では保存しない", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send("/mcp\r");
+      await waitFor(output, "[ ] nihongo-kit");
+      input.send(" ");
+      input.send("\x1b");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(existsSync(join(home, ".ja-harness", "config.json"))).toBe(false);
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/mcp add で個人の設定にサーバーを足す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, home, cwd });
+
+      input.send(
+        '/mcp add demo node "C:\\Program Files\\demo\\server.mjs" --flag\r',
+      );
+      await waitFor(
+        output,
+        "追加しました（demo）。次の /clear か起動から効きます",
+      );
+
+      const path = join(home, ".ja-harness", "config.json");
+      const saved = JSON.parse(readFileSync(path, "utf8")) as {
+        mcp: { servers: Record<string, { command: string; args?: string[] }> };
+      };
+      expect(saved.mcp.servers.demo).toEqual({
+        command: "node",
+        args: ["C:\\Program Files\\demo\\server.mjs", "--flag"],
+      });
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("有効なサーバーがあると起動時につないでいますと出す", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ja-harness-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-cwd-"));
+    try {
+      writeSettingsConfig(home, { mcp: { enabled: ["nihongo-kit"] } });
+      const { complete } = sequence([]);
+      const { input, output, result } = start({
+        complete,
+        home,
+        cwd,
+        connectMcp: fakeMcp(),
+      });
+
+      await waitFor(output, "MCP: nihongo-kit につないでいます…");
 
       expect(await close(input, output, result)).toBe(0);
     } finally {

@@ -49,6 +49,7 @@ const HELP = `使い方: ja-harness [--resume <id> | --continue]
       {"mode": "plan", "ui": {"theme": "light", "details": "verbose"}}
       {"ui": {"enter": "newline"}}
       {"language": {"ui": "ja"}}
+      {"mcp": {"servers": {"textlint": {"command": "npx", "args": ["textlint", "--mcp"]}}, "enabled": ["nihongo-kit"]}}
 
 環境変数:
   JA_HARNESS_BASE_URL   API の URL
