@@ -27,10 +27,12 @@
 
 - 2026-10-28: トークン削減を見直した。見つけた問題: (1) 価格で決める masking は、どこからも `prices` を渡していないので本番で一度も動いていない。中身も 4,000 トークン超の結果を切るだけで、設計の「1行の跡に置き換える・10件ごと・キャッシュが冷えたら隠す」は未実装 (2) 道具を1つずつ呼んで往復が多い (3) 要約に失敗すると毎回やり直す (4) エラーの結果を切らない (5) 前のやりとりの推論まで見積もりに数える（API は捨てていて料金はかからないと確かめた）。(2)〜(5) を PR #6 で直した（テスト585件）。bench（DeepSeek、9件×3回）では料金も合格も変わらなかった（`bench/RESULTS.md`）
 
+- 2026-10-28（夜、続き）: masking を作り直した（DECISIONS.md の「古い道具の結果は…」）。models.dev の料金表、`bench --sim`（API を呼ばない測定）、本物の bench の `--context`、何回かやりとりする課題（multi-todo・multi-invoice・multi-config）を足した。テスト652件。結果は `bench/RESULTS.md`
+
 ## 次にやること
 1. 本人が Windows で、PowerShell で動くシェル・確認のカードの目的・英語の表示・決まりのファイル・スキル・MCP（`/mcp add` でサーバーを足し、`/clear` のあと使わせる）を確かめる（Windows での実行はまだ一度も確かめていない）。起動は `cd $HOME\jh-test` のあと `node $HOME\ja-harness\dist\index.js`
 2. Windows Terminal で Shift+Enter が効かない原因を調べる（Node が Windows でキーを受け取る仕組みで Shift が落ちている可能性）
-3. masking を設計どおりに作り直し、`prices` を `findModel` から渡す（Claude・GPT で効く。DeepSeek ではほぼ隠さないのが正解なので後回しにした）
+3. DeepSeek では、しきい値を超えたときに隠すと input-only より 11 ポイント高い（`bench --sim`）。しきい値を料金から決めるか、質の歯止めとして残すかを本人と決める
 4. 道具の結果の上限（2,000・8,000）を価格から決める（キャッシュの割引が小さいモデルでは、上限を上げて読み直しを減らすほうが安い可能性）。決める前に本人に確認する
 5. bench の課題をもう少し難しくする（DeepSeek は3条件とも9割以上通る）
 6. v0.1 の残り: subagent、リポジトリの地図など `docs/design/context.md` の「そのほかの削減」
