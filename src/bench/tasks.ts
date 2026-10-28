@@ -7,6 +7,7 @@ export type BenchTask = {
   id: string;
   kind: TaskKind;
   turns: string[];
+  maxSteps?: number;
   dir: string;
 };
 
@@ -45,6 +46,18 @@ function parseTaskJson(path: string, id: string): Omit<BenchTask, "dir"> {
   if (task.kind !== "fix" && task.kind !== "generate") {
     throw new Error(`課題 ${id} の kind は fix か generate です`);
   }
+  let maxSteps: number | undefined;
+  if (task.maxSteps !== undefined) {
+    if (
+      typeof task.maxSteps !== "number" ||
+      !Number.isInteger(task.maxSteps) ||
+      task.maxSteps < 1
+    ) {
+      throw new Error(`課題 ${id} の maxSteps は正の整数です`);
+    }
+    maxSteps = task.maxSteps;
+  }
+  const steps = maxSteps === undefined ? {} : { maxSteps };
   const hasPrompt = task.prompt !== undefined;
   const hasTurns = task.turns !== undefined;
   if (hasPrompt === hasTurns) {
@@ -57,7 +70,7 @@ function parseTaskJson(path: string, id: string): Omit<BenchTask, "dir"> {
     if (typeof task.prompt !== "string" || task.prompt === "") {
       throw new Error(`課題 ${id} の task.json に prompt がありません`);
     }
-    return { id: task.id, kind: task.kind, turns: [task.prompt] };
+    return { id: task.id, kind: task.kind, turns: [task.prompt], ...steps };
   }
 
   if (!Array.isArray(task.turns) || task.turns.length < 2) {
@@ -69,7 +82,7 @@ function parseTaskJson(path: string, id: string): Omit<BenchTask, "dir"> {
     }
   }
 
-  return { id: task.id, kind: task.kind, turns: [...task.turns] };
+  return { id: task.id, kind: task.kind, turns: [...task.turns], ...steps };
 }
 
 function loadOne(root: string, name: string): BenchTask {

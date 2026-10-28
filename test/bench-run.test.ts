@@ -323,6 +323,67 @@ describe("runOne", () => {
     expect(result.contextActions).toEqual({ mask: 1, prune: 0, summary: 0 });
   });
 
+  it("課題の maxSteps で打ち切る", async () => {
+    const tasksDir = join(dir, "tasks");
+    const workRoot = join(dir, "work");
+    const taskDir = join(tasksDir, "steps");
+    for (const folder of ["files", "grade", "solution"]) {
+      mkdirSync(join(taskDir, folder), { recursive: true });
+    }
+    writeFileSync(
+      join(taskDir, "task.json"),
+      JSON.stringify({
+        id: "steps",
+        kind: "fix",
+        prompt: "直してください。",
+        maxSteps: 2,
+      }),
+    );
+    writeFileSync(
+      join(taskDir, "files", "package.json"),
+      '{"type":"module"}\n',
+    );
+    writeFileSync(
+      join(taskDir, "grade", "math.test.js"),
+      'import assert from "node:assert";\nimport test from "node:test";\ntest("ok", () => assert.ok(true));\n',
+    );
+
+    let calls = 0;
+    const complete: Complete = async () => {
+      calls += 1;
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            { id: `call-${calls}`, name: "missing-tool", arguments: "{}" },
+          ],
+        },
+        usage: { input: 1, cachedInput: 0, output: 1, reasoning: 0 },
+        finishReason: "tool_calls",
+      };
+    };
+
+    const task = loadTasks(tasksDir)[0];
+    const result = await runOne({
+      task,
+      condition: "none",
+      rep: 1,
+      workRoot,
+      config: {
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        contextWindow: 1000,
+      },
+      turnTimeoutMs: 10_000,
+      complete,
+    });
+
+    expect(calls).toBe(2);
+    expect(result.steps).toBe(2);
+    expect(result.stop).toBe("max-steps");
+  });
+
   it("複数の turn を同じ会話で続けて実行する", async () => {
     const tasksDir = join(dir, "tasks");
     const workRoot = join(dir, "work");

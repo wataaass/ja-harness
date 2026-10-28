@@ -107,6 +107,58 @@ describe("loadTasks", () => {
     }
   });
 
+  it("maxSteps を読む", () => {
+    const root = mkdtempSync(join(tmpdir(), "ja-harness-tasks-"));
+    try {
+      const dir = join(root, "steps");
+      for (const folder of ["files", "grade", "solution"]) {
+        mkdirSync(join(dir, folder), { recursive: true });
+      }
+      writeFileSync(
+        join(dir, "task.json"),
+        JSON.stringify({
+          id: "steps",
+          kind: "fix",
+          prompt: "直す",
+          maxSteps: 120,
+        }),
+      );
+
+      expect(loadTasks(root, ["steps"])[0]?.maxSteps).toBe(120);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("maxSteps がないときは持たない", () => {
+    const tasks = loadTasks(tasksDir, ["sample-add"]);
+
+    expect(tasks[0]?.maxSteps).toBeUndefined();
+  });
+
+  it("maxSteps が正の整数でなければエラー", () => {
+    const root = mkdtempSync(join(tmpdir(), "ja-harness-tasks-"));
+    try {
+      const dir = join(root, "broken");
+      for (const folder of ["files", "grade", "solution"]) {
+        mkdirSync(join(dir, folder), { recursive: true });
+      }
+      writeFileSync(
+        join(dir, "task.json"),
+        JSON.stringify({
+          id: "broken",
+          kind: "fix",
+          prompt: "直す",
+          maxSteps: 0,
+        }),
+      );
+
+      expect(() => loadTasks(root, ["broken"])).toThrow("maxSteps");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("prompt と turns が両方あるとエラー", () => {
     const root = mkdtempSync(join(tmpdir(), "ja-harness-tasks-"));
     try {

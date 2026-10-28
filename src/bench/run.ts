@@ -33,6 +33,7 @@ import {
 } from "./workspace.js";
 
 export const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_MAX_STEPS = 30;
 
 export type StopReason = "done" | "max-steps" | "error";
 
@@ -410,7 +411,7 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
         complete,
         tools,
         messages,
-        maxSteps: 30,
+        maxSteps: task.maxSteps ?? DEFAULT_MAX_STEPS,
         signal: controller.signal,
         onEvent,
         repeat,
