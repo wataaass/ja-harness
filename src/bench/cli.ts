@@ -14,7 +14,7 @@ const BENCH_HELP = `使い方: ja-harness bench [オプション]
 
 オプション:
   --tasks a,b           課題を選ぶ
-  --conditions a,b      条件（none,input-only,default）
+  --conditions a,b      条件（none,input-only,default,mask-off）
   --reps N              回数（既定3）
   --concurrency N       同時数（既定3）
   --tasks-dir DIR       課題のフォルダ（既定 bench/tasks）

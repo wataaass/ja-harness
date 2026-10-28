@@ -156,6 +156,7 @@ export const ja = {
       ` (Context: ${action} -${n} tokens)`,
     contextPrune: "pruned",
     contextSummary: "summarized",
+    contextMask: "masked",
     editPathPrefix: "Edit ",
     picker: {
       modeTitle: "Mode",

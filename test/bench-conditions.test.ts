@@ -75,6 +75,7 @@ describe("createCondition", () => {
       contextWindow: 100000,
       estimate: createEstimator(),
       model: "deepseek-v4.1-flash",
+      context: { mask: { window: 0, minTokens: 1 } },
     });
     const manager = parts.context?.manager;
     expect(manager).toBeDefined();
@@ -98,13 +99,14 @@ describe("createCondition", () => {
       await manager.beforeStep(list, specs, undefined);
     }
     expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
-      "lines pruned",
+      "[Hidden to save tokens:",
     );
   });
 
   it("条件名を判定する", () => {
     expect(isConditionName("none")).toBe(true);
     expect(isConditionName("default")).toBe(true);
+    expect(isConditionName("mask-off")).toBe(true);
     expect(isConditionName("other")).toBe(false);
   });
 });

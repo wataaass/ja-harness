@@ -5,12 +5,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   computeCost,
   createSimModel,
+  mergeContext,
   prefixTokens,
   requestTokens,
   runSimulation,
   snapshotRequest,
 } from "../src/bench/sim/run.js";
 import { makeScenarios, type Scenario } from "../src/bench/sim/scenarios.js";
+import { DEFAULT_CONTEXT } from "../src/context/manager.js";
+import { maskStub } from "../src/context/mask.js";
 import { createEstimator } from "../src/context/tokens.js";
 import { findModel } from "../src/llm/models.js";
 import type { Message, ToolSpec } from "../src/llm/types.js";
@@ -167,6 +170,32 @@ describe("キャッシュの模型", () => {
   });
 });
 
+describe("context の上書き", () => {
+  it("mask の片方だけを変えても他の既定は残る", () => {
+    const merged = mergeContext({ mask: { margin: 2 } });
+
+    expect(merged.mask).toEqual({ ...DEFAULT_CONTEXT.mask, margin: 2 });
+    expect(merged.prune).toBeUndefined();
+  });
+
+  it("prune と mask を同時に深く重ねられる", () => {
+    const merged = mergeContext({
+      prune: { maxTokens: 1234 },
+      mask: { window: 2, maxCallsAhead: 10 },
+    });
+
+    expect(merged.prune).toEqual({
+      ...DEFAULT_CONTEXT.prune,
+      maxTokens: 1234,
+    });
+    expect(merged.mask).toEqual({
+      ...DEFAULT_CONTEXT.mask,
+      window: 2,
+      maxCallsAhead: 10,
+    });
+  });
+});
+
 describe("偽のモデル", () => {
   it("needs の結果が消えていたら読み直しを1回挟む", async () => {
     const scenario: Scenario = {
@@ -223,7 +252,11 @@ describe("偽のモデル", () => {
     const first = await model.complete(messages, []);
     expect(first.message.toolCalls?.[0]?.id).toBe("a");
     messages.push(first.message);
-    messages.push({ role: "tool", toolCallId: "a", content: "pruned" });
+    messages.push({
+      role: "tool",
+      toolCallId: "a",
+      content: maskStub("read", JSON.stringify({ paths: ["a.ts"] }), 50),
+    });
 
     const second = await model.complete(messages, []);
     expect(second.message.toolCalls).toHaveLength(1);

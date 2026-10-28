@@ -4,7 +4,7 @@ import { parseBenchArgs } from "../src/bench/cli.js";
 describe("parseBenchArgs", () => {
   it("既定値を返す", () => {
     expect(parseBenchArgs([])).toEqual({
-      conditions: ["none", "input-only", "default"],
+      conditions: ["none", "input-only", "default", "mask-off"],
       reps: 3,
       concurrency: 3,
       tasksDir: "bench/tasks",

@@ -3,6 +3,7 @@ import type { Complete } from "../src/agent/loop.js";
 import type { ContextConfig } from "../src/context/manager.js";
 import {
   createContextManager,
+  DEFAULT_CONTEXT,
   summaryThreshold,
 } from "../src/context/manager.js";
 import type { Estimator } from "../src/context/tokens.js";
@@ -31,6 +32,8 @@ function config(overrides: Partial<ContextConfig> = {}): ContextConfig {
     targetRatio: 1,
     keepRecentTokens: 10,
     prune: { maxTokens: 80, headTokens: 20, tailTokens: 20 },
+    mask: { window: 5, minTokens: 300, maxCallsAhead: Infinity, margin: 1 },
+    cacheTtlSeconds: 300,
     overflowRetries: 1,
     mode: "price",
     minCallsAhead: 3,
@@ -186,7 +189,7 @@ describe("createContextManager", () => {
     expect(fake.calls).toBe(0);
   });
 
-  it("切り詰めだけで下回ったら要約を呼ばない", async () => {
+  it("しきい値を超えたら隠して下回り、要約を呼ばない", async () => {
     const fake = fakeComplete("short");
     const manager = createContextManager({
       config: config(),
@@ -200,12 +203,12 @@ describe("createContextManager", () => {
 
     expect(fake.calls).toBe(0);
     expect(prep.actions).toHaveLength(1);
-    expect(prep.actions[0]?.action).toBe("prune");
+    expect(prep.actions[0]?.action).toBe("mask");
     expect(prep.actions[0]?.savedTokens).toBeGreaterThan(0);
     expect(list[0]).toBe(first);
     expect(list[3]).toMatchObject({ role: "tool" });
     expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
-      "lines pruned",
+      "[Hidden to save tokens:",
     );
   });
 
@@ -247,7 +250,7 @@ describe("createContextManager", () => {
     expect(estimateMessages(list, tenths)).toBeLessThanOrEqual(target);
   });
 
-  it("切り詰めても超えたら、切り詰める前の会話で要約し、usage と差を返す", async () => {
+  it("隠しても超えたら、隠したあとの会話で要約し、usage と差を返す", async () => {
     const fake = fakeComplete("short");
     const manager = createContextManager({
       config: config({ contextWindow: 100 }),
@@ -263,10 +266,13 @@ describe("createContextManager", () => {
     expect(fake.calls).toBe(1);
     expect(fake.received).toHaveLength(1);
     const sent = fake.received[0] as Message[];
-    expect((sent[4] as Extract<Message, { role: "tool" }>).content).toBe(big);
+    expect((sent[4] as Extract<Message, { role: "tool" }>).content).toContain(
+      "[Hidden to save tokens:",
+    );
     expect(prep.usage).toBe(usage);
-    expect(prep.actions.map((action) => action.action)).toEqual(["summary"]);
-    expect(prep.actions[0]?.savedTokens).toBeGreaterThan(0);
+    expect(prep.actions.map((action) => action.action)).toContain("summary");
+    const summary = prep.actions.find((action) => action.action === "summary");
+    expect(summary?.savedTokens).toBeGreaterThan(0);
     expect(list[0]).toBe(first);
     expect(list[1]).toMatchObject({ role: "user" });
     expect((list[1] as Extract<Message, { role: "user" }>).content).toContain(
@@ -288,10 +294,11 @@ describe("createContextManager", () => {
 
     expect(fake.calls).toBe(1);
     expect(prep.actions.map((action) => action.action)).toEqual([
+      "mask",
       "summary",
       "prune",
     ]);
-    expect(prep.actions[1]?.savedTokens).toBeGreaterThan(0);
+    expect(prep.actions[2]?.savedTokens).toBeGreaterThan(0);
     expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
       "lines pruned",
     );
@@ -311,7 +318,10 @@ describe("createContextManager", () => {
 
     expect(fake.calls).toBe(1);
     expect(prep.usage).toBe(usage);
-    expect(prep.actions.map((action) => action.action)).toEqual(["prune"]);
+    expect(prep.actions.map((action) => action.action)).toEqual([
+      "mask",
+      "prune",
+    ]);
     expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
       "lines pruned",
     );
@@ -400,6 +410,7 @@ describe("createContextManager", () => {
     const manager = createContextManager({
       config: config({
         contextWindow: 10000,
+        mask: { window: 0, minTokens: 1 },
         prices: { input: 0.3, cachedInput: 0.006 },
       }),
       complete: fake.complete,
@@ -420,6 +431,7 @@ describe("createContextManager", () => {
     const manager = createContextManager({
       config: config({
         contextWindow: 10000,
+        mask: { window: 0, minTokens: 1 },
         prices: { input: 0.3, cachedInput: 0.006 },
       }),
       complete: fake.complete,
@@ -432,7 +444,7 @@ describe("createContextManager", () => {
     }
 
     expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
-      "lines pruned",
+      "[Hidden to save tokens:",
     );
     expect(fake.calls).toBe(0);
   });
@@ -442,6 +454,7 @@ describe("createContextManager", () => {
     const manager = createContextManager({
       config: config({
         contextWindow: 10000,
+        mask: { window: 0, minTokens: 1 },
         prices: { input: 3, cachedInput: 0.3 },
       }),
       complete: fake.complete,
@@ -454,7 +467,7 @@ describe("createContextManager", () => {
     }
 
     expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
-      "lines pruned",
+      "[Hidden to save tokens:",
     );
     expect(fake.calls).toBe(0);
   });
@@ -475,7 +488,7 @@ describe("createContextManager", () => {
     expect(list[3]).toBe(firstTool);
   });
 
-  it("しきい値を超えたら料金を見ずに切り詰める", async () => {
+  it("しきい値を超えたら料金を見ずに隠す", async () => {
     const fake = fakeComplete("short");
     const manager = createContextManager({
       config: config({
@@ -490,9 +503,175 @@ describe("createContextManager", () => {
     const prep = await manager.beforeStep(list, tools, undefined);
 
     expect(fake.calls).toBe(0);
-    expect(prep.actions.map((action) => action.action)).toEqual(["prune"]);
+    expect(prep.actions.map((action) => action.action)).toEqual(["mask"]);
     expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
-      "lines pruned",
+      "[Hidden to save tokens:",
+    );
+  });
+
+  it("キャッシュが冷えていれば料金を見ずに隠す", async () => {
+    const fake = fakeComplete("short");
+    let clock = 1_000;
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        mask: { window: 0, minTokens: 1 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+      now: () => clock,
+    });
+    const list = messages();
+
+    const warm = await manager.beforeStep(list, tools, undefined);
+    expect(warm.actions).toEqual([]);
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toBe(big);
+
+    clock += 300_001;
+    const cold = await manager.beforeStep(list, tools, undefined);
+    expect(cold.actions.map((action) => action.action)).toEqual(["mask"]);
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
+      "[Hidden to save tokens:",
+    );
+  });
+
+  it("キャッシュが温かく prices がなければ隠さない", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        mask: { window: 0, minTokens: 1 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+      now: () => 1_000,
+    });
+    const list = messages();
+
+    for (let i = 0; i < 5; i += 1) {
+      const prep = await manager.beforeStep(list, tools, undefined);
+      expect(prep.actions).toEqual([]);
+    }
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toBe(big);
+  });
+
+  it("しきい値を超えたら料金を見ずに先に隠す", async () => {
+    const fake = fakeComplete("   ");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 100,
+        mask: { window: 0, minTokens: 1 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    const prep = await manager.beforeStep(list, tools, undefined);
+
+    expect(prep.actions[0]?.action).toBe("mask");
+  });
+
+  it("既定では targetRatio 0.7 と mask の上限・margin を持つ", () => {
+    expect(DEFAULT_CONTEXT.targetRatio).toBe(0.7);
+    expect(DEFAULT_CONTEXT.mask).toEqual({
+      window: 5,
+      minTokens: 300,
+      maxCallsAhead: Infinity,
+      margin: 1,
+    });
+  });
+
+  it("maxCallsAhead を超えて先の往復を見込まない", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        mask: { window: 0, minTokens: 1, maxCallsAhead: 3, margin: 1 },
+        prices: { input: 0.3, cachedInput: 0.006 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    for (let i = 0; i < 100; i += 1) {
+      const prep = await manager.beforeStep(list, tools, undefined);
+      expect(prep.actions).toEqual([]);
+    }
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toBe(big);
+  });
+
+  it("margin 倍の得がなければ隠さない", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 10000,
+        mask: { window: 0, minTokens: 1, maxCallsAhead: Infinity, margin: 100 },
+        prices: { input: 3, cachedInput: 0.3 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list = messages();
+
+    for (let i = 0; i < 20; i += 1) {
+      const prep = await manager.beforeStep(list, tools, undefined);
+      expect(prep.actions).toEqual([]);
+    }
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toBe(big);
+  });
+
+  it("しきい値を超えたら window の中も古い順に target まで隠す", async () => {
+    const fake = fakeComplete("short");
+    const manager = createContextManager({
+      config: config({
+        contextWindow: 1200,
+        targetRatio: 1,
+        mask: { window: 2, minTokens: 300, maxCallsAhead: Infinity, margin: 1 },
+      }),
+      complete: fake.complete,
+      estimate: chars,
+    });
+    const list: Message[] = [
+      { role: "system", content: "s" },
+      { role: "user", content: "u" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "1", name: "read", arguments: '{"paths":["a.ts"]}' }],
+      },
+      { role: "tool", toolCallId: "1", content: "a".repeat(600) },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "2", name: "read", arguments: '{"paths":["b.ts"]}' }],
+      },
+      { role: "tool", toolCallId: "2", content: "b".repeat(320) },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "3", name: "read", arguments: '{"paths":["c.ts"]}' }],
+      },
+      { role: "tool", toolCallId: "3", content: "c".repeat(320) },
+      { role: "assistant", content: "done" },
+    ];
+
+    const prep = await manager.beforeStep(list, tools, undefined);
+
+    expect(fake.calls).toBe(0);
+    expect(prep.actions.map((action) => action.action)).toEqual([
+      "mask",
+      "mask",
+    ]);
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
+      "[Hidden to save tokens:",
+    );
+    expect((list[5] as Extract<Message, { role: "tool" }>).content).toContain(
+      "[Hidden to save tokens:",
+    );
+    expect((list[7] as Extract<Message, { role: "tool" }>).content).toBe(
+      "c".repeat(320),
     );
   });
 });

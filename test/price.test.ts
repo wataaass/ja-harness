@@ -73,4 +73,16 @@ describe("rewritePays", () => {
       }),
     ).toBe(false);
   });
+
+  it("margin 倍の得がないと書き換えない", () => {
+    const args = {
+      rewrittenTokens: 100,
+      savedTokens: 100,
+      callsAhead: 2,
+      prices: { input: 2, cachedInput: 1 },
+    };
+    expect(rewritePays({ ...args, margin: 1 })).toBe(true);
+    expect(rewritePays({ ...args, margin: 1.9 })).toBe(true);
+    expect(rewritePays({ ...args, margin: 2 })).toBe(false);
+  });
 });

@@ -38,8 +38,9 @@ export const DEFAULT_SIM_MODELS = [
 
 export const SIM_SCENARIOS = ["short", "medium", "long", "read-heavy"];
 
-export type ContextOverride = Partial<Omit<ContextConfig, "prune">> & {
+export type ContextOverride = Partial<Omit<ContextConfig, "prune" | "mask">> & {
   prune?: Partial<ContextConfig["prune"]>;
+  mask?: Partial<ContextConfig["mask"]>;
 };
 
 export type PendingCall = { label: string; resultTokens: number };
@@ -498,12 +499,15 @@ export function mergeContext(
   if (override === undefined) {
     return {};
   }
-  const { prune, ...rest } = override;
+  const { prune, mask, ...rest } = override;
   return {
     ...rest,
     ...(prune === undefined
       ? {}
       : { prune: { ...DEFAULT_CONTEXT.prune, ...prune } }),
+    ...(mask === undefined
+      ? {}
+      : { mask: { ...DEFAULT_CONTEXT.mask, ...mask } }),
   };
 }
 
@@ -656,6 +660,7 @@ export async function runSimulation(
             estimate,
             model,
             context,
+            now: sim.now,
           });
           const messages: Message[] = [
             { role: "system", content: SYSTEM_PROMPT },

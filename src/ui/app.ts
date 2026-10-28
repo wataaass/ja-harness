@@ -2788,7 +2788,9 @@ export async function runApp(o: AppOptions): Promise<number> {
             messages.app.contextAction(
               event.action === "prune"
                 ? messages.app.contextPrune
-                : messages.app.contextSummary,
+                : event.action === "mask"
+                  ? messages.app.contextMask
+                  : messages.app.contextSummary,
               formatTokens(event.savedTokens),
             ),
           ),

@@ -124,10 +124,17 @@ function newState(seed: number, prefix: string): State {
 }
 
 function resultTokensFor(rng: Rng, tool: SimTool, large: boolean): number {
+  const huge = rng() < 0.1;
   switch (tool) {
     case "read":
+      if (huge) {
+        return randomInt(rng, 9000, 15000);
+      }
       return large ? randomInt(rng, 2500, 6000) : randomInt(rng, 300, 6000);
     case "shell":
+      if (huge) {
+        return randomInt(rng, 8000, 20000);
+      }
       return large ? randomInt(rng, 1500, 5000) : randomInt(rng, 200, 5000);
     case "grep":
       return randomInt(rng, 100, 1500);

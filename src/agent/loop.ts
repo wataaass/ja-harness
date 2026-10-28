@@ -25,7 +25,11 @@ export type LoopEvent =
   | { type: "tool-end"; name: string; result: string; isError: boolean }
   | { type: "step-end"; usage: Usage }
   | { type: "input-delivered"; count: number }
-  | { type: "context"; action: "prune" | "summary"; savedTokens: number };
+  | {
+      type: "context";
+      action: "prune" | "summary" | "mask";
+      savedTokens: number;
+    };
 
 export type RunOptions = {
   complete: Complete;

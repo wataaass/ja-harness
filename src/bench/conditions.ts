@@ -9,7 +9,12 @@ import { createFileSaver, limitToolResult } from "../context/spill.js";
 import type { Estimator } from "../context/tokens.js";
 import { modelPrices } from "../llm/models.js";
 
-export const CONDITIONS = ["none", "input-only", "default"] as const;
+export const CONDITIONS = [
+  "none",
+  "input-only",
+  "default",
+  "mask-off",
+] as const;
 
 export type ConditionName = (typeof CONDITIONS)[number];
 
@@ -21,6 +26,7 @@ export type ConditionOptions = {
   estimate: Estimator;
   model?: string;
   context?: Partial<ContextConfig>;
+  now?: () => number;
 };
 
 export type ConditionParts = Pick<RunOptions, "limitResult" | "context">;
@@ -54,9 +60,11 @@ export function createCondition(o: ConditionOptions): ConditionParts {
       contextWindow: o.contextWindow,
       ...o.context,
       ...(prices === undefined ? {} : { prices }),
+      ...(o.name === "mask-off" ? { maskBelowThreshold: false } : {}),
     },
     complete: o.complete,
     estimate: o.estimate,
+    ...(o.now === undefined ? {} : { now: o.now }),
   });
 
   return {

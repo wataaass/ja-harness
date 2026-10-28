@@ -260,7 +260,12 @@ async function main(): Promise<number> {
           const firstLine = event.result.split(/\r?\n/)[0] ?? "";
           process.stderr.write(`  ✗ ${firstLine.slice(0, 80)}\n`);
         } else if (event.type === "context") {
-          const action = event.action === "prune" ? "pruned" : "summarized";
+          const action =
+            event.action === "prune"
+              ? "pruned"
+              : event.action === "mask"
+                ? "masked"
+                : "summarized";
           process.stderr.write(
             ` (Context: ${action} -${event.savedTokens} tokens)\n`,
           );
