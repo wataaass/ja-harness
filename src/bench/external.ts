@@ -1,6 +1,12 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { readConfig } from "../cli/config.js";
+import {
+  loadCatalogFromCache,
+  providerInfo,
+  resolveProvider,
+} from "../llm/catalog.js";
 import { type BenchRecord, formatResultsTable, writeResults } from "./run.js";
 import { loadTasks } from "./tasks.js";
 import {
@@ -105,7 +111,16 @@ export async function gradeExternal(
 ): Promise<GradeExternalOutput> {
   const workDir = options.workDir ?? join(defaultWorkRoot(), options.name);
   const resultsDir = options.resultsDir ?? "bench/results";
-  const config = readConfig(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const provider = resolveProvider(env);
+  loadCatalogFromCache({
+    home: env.JA_HARNESS_HOME ?? homedir(),
+    provider,
+  });
+  const config = readConfig(env, {
+    provider,
+    catalog: providerInfo(provider),
+  });
   const manifestPath = join(workDir, "tasks.json");
   const manifest = readManifest(manifestPath);
   const tasks = loadTasks(

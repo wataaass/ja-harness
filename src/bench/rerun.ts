@@ -1,5 +1,11 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { readConfig } from "../cli/config.js";
+import {
+  loadCatalogFromCache,
+  providerInfo,
+  resolveProvider,
+} from "../llm/catalog.js";
 import { type ConditionName, isConditionName } from "./conditions.js";
 import {
   type BenchRecord,
@@ -141,7 +147,16 @@ export async function rerunErrors(
 ): Promise<RerunErrorsOutput> {
   const text = readFileSync(options.resultsPath, "utf8");
   const payload = parseResultsJson(text);
-  const config = readConfig(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const provider = resolveProvider(env);
+  loadCatalogFromCache({
+    home: env.JA_HARNESS_HOME ?? homedir(),
+    provider,
+  });
+  const config = readConfig(env, {
+    provider,
+    catalog: providerInfo(provider),
+  });
   if (payload.model !== config.model) {
     throw new Error(
       `モデルが違います: 結果は ${payload.model}、今の環境は ${config.model}`,

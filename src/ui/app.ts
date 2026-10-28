@@ -50,7 +50,12 @@ import {
   estimateMessages,
   lastUserIndex,
 } from "../context/tokens.js";
-import { findModel, MODELS, type ModelInfo } from "../llm/models.js";
+import {
+  findModel,
+  listModels,
+  type ModelInfo,
+  modelPrices,
+} from "../llm/models.js";
 import type { Message, ToolSpec, Usage } from "../llm/types.js";
 import { connectMcp, type McpHub, type McpToolInfo } from "../mcp/hub.js";
 import { type ResolvedServer, resolveServers } from "../mcp/servers.js";
@@ -367,25 +372,31 @@ export async function runApp(o: AppOptions): Promise<number> {
   let mode: Mode = settings.mode ?? "run";
   let permission: Permission = settings.permission ?? "ask";
   let model = settings.model ?? o.model;
+  let contextWindow = o.contextWindow;
   let effort =
     o.effort ?? settings.effort ?? findModel(model)?.defaultEffort ?? "high";
 
   const currentComplete = (): Complete => o.makeComplete(model, effort);
 
-  const manager = createContextManager({
-    config: {
-      ...DEFAULT_CONTEXT,
-      contextWindow: o.contextWindow,
-      ...(o.prices === undefined ? {} : { prices: o.prices }),
-    },
-    complete: (messages, tools, cb) =>
-      currentComplete()(messages, tools, {
-        onText: () => {},
-        onReasoning: () => {},
-        ...(cb ?? {}),
-      }),
-    estimate,
-  });
+  function createManager() {
+    const prices = o.prices ?? modelPrices(model);
+    return createContextManager({
+      config: {
+        ...DEFAULT_CONTEXT,
+        contextWindow,
+        ...(prices === undefined ? {} : { prices }),
+      },
+      complete: (messages, tools, cb) =>
+        currentComplete()(messages, tools, {
+          onText: () => {},
+          onReasoning: () => {},
+          ...(cb ?? {}),
+        }),
+      estimate,
+    });
+  }
+
+  let manager = createManager();
 
   const conversation: Message[] = [{ role: "system", content: systemContent }];
   const queue: QueuedInput[] = [];
@@ -655,8 +666,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       return truncate(theme.dim(messages.app.exitAgain), maxWidth);
     }
     const total = totalUsage();
-    const contextRatio =
-      o.contextWindow > 0 ? lastStepInput / o.contextWindow : 0;
+    const contextRatio = contextWindow > 0 ? lastStepInput / contextWindow : 0;
     return renderStatus({
       mode: modeLabel(mode, messages),
       permission: permissionLabel(permission, messages),
@@ -774,7 +784,8 @@ export async function runApp(o: AppOptions): Promise<number> {
         theme,
       });
     }
-    const info = MODELS[current.modelIndex] ?? MODELS[0];
+    const models = listModels();
+    const info = models[current.modelIndex] ?? models[0];
     if (info === undefined) {
       return [];
     }
@@ -788,8 +799,20 @@ export async function runApp(o: AppOptions): Promise<number> {
     const body: string[] = [
       ` ${messages.app.picker.effortLabel}  ${efforts.join("  ")}`,
     ];
-    for (let index = 0; index < MODELS.length; index += 1) {
-      const item = MODELS[index];
+    const windowSize = Math.min(10, models.length);
+    const start = Math.max(
+      0,
+      Math.min(
+        current.modelIndex - Math.floor(windowSize / 2),
+        models.length - windowSize,
+      ),
+    );
+    const end = start + windowSize;
+    if (start > 0) {
+      body.push(` ${messages.app.picker.modelsAbove(start)}`);
+    }
+    for (let index = start; index < end; index += 1) {
+      const item = models[index];
       if (item === undefined) {
         continue;
       }
@@ -797,6 +820,9 @@ export async function runApp(o: AppOptions): Promise<number> {
       const marker = model === item.id ? "●" : " ";
       const text = `${marker} ${modelRow(item, messages)}`;
       body.push(active ? theme.accent(text) : text);
+    }
+    if (end < models.length) {
+      body.push(` ${messages.app.picker.modelsBelow(models.length - end)}`);
     }
     return renderCard({
       title: messages.app.picker.modelTitle,
@@ -1794,25 +1820,26 @@ export async function runApp(o: AppOptions): Promise<number> {
       return;
     }
 
-    const info = MODELS[picker.modelIndex] ?? MODELS[0];
+    const models = listModels();
+    const info = models[picker.modelIndex] ?? models[0];
     if (info === undefined) {
       return;
     }
     if (key.type === "up") {
       picker.modelIndex =
-        (picker.modelIndex - 1 + MODELS.length) % MODELS.length;
+        (picker.modelIndex - 1 + models.length) % models.length;
       picker.effortIndex = Math.min(
         picker.effortIndex,
-        (MODELS[picker.modelIndex]?.efforts.length ?? 1) - 1,
+        (models[picker.modelIndex]?.efforts.length ?? 1) - 1,
       );
       render();
       return;
     }
     if (key.type === "down") {
-      picker.modelIndex = (picker.modelIndex + 1) % MODELS.length;
+      picker.modelIndex = (picker.modelIndex + 1) % models.length;
       picker.effortIndex = Math.min(
         picker.effortIndex,
-        (MODELS[picker.modelIndex]?.efforts.length ?? 1) - 1,
+        (models[picker.modelIndex]?.efforts.length ?? 1) - 1,
       );
       render();
       return;
@@ -1829,7 +1856,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       return;
     }
     if (key.type === "enter") {
-      const chosen = MODELS[picker.modelIndex] ?? MODELS[0];
+      const chosen = models[picker.modelIndex] ?? models[0];
       if (chosen === undefined) {
         return;
       }
@@ -1840,6 +1867,9 @@ export async function runApp(o: AppOptions): Promise<number> {
       effort = nextEffort;
       picker = undefined;
       if (changed) {
+        const info = findModel(model);
+        contextWindow = info?.contextWindow ?? o.contextWindow;
+        manager = createManager();
         emit([messages.app.modelChanged]);
       } else {
         render();
@@ -1937,7 +1967,7 @@ export async function runApp(o: AppOptions): Promise<number> {
       }
     }
     const total = instructions + toolTokens + conversationTokens + results;
-    const ratio = o.contextWindow > 0 ? total / o.contextWindow : 0;
+    const ratio = contextWindow > 0 ? total / contextWindow : 0;
 
     const used = totalUsage();
     const info = findModel(model);
@@ -2344,11 +2374,12 @@ export async function runApp(o: AppOptions): Promise<number> {
         return true;
       }
       case "/model": {
+        const models = listModels();
         const index = Math.max(
           0,
-          MODELS.findIndex((item) => item.id === model),
+          models.findIndex((item) => item.id === model),
         );
-        const info = MODELS[index] ?? MODELS[0];
+        const info = models[index] ?? models[0];
         picker = {
           kind: "model",
           modelIndex: index,

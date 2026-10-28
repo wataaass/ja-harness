@@ -166,6 +166,8 @@ export const ja = {
       effortLabel: "Effort",
       modelTitle: "Model",
       modelFooter: "↑↓ model  ←→ effort  Enter select  Esc cancel",
+      modelsAbove: (n: number) => `↑ ほか ${n}`,
+      modelsBelow: (n: number) => `↓ ほか ${n}`,
       skillsTitle: "Skills",
       skillsFooter: "↑↓ move  Space toggle  Enter save  Esc cancel",
       skillsRow: (mark: string, name: string, source: string, tokens: string) =>

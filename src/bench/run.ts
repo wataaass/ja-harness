@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Complete, type LoopEvent, runTurn } from "../agent/loop.js";
 import { SYSTEM_PROMPT } from "../agent/prompt.js";
-import { readConfig } from "../cli/config.js";
+import { readConfig, useOpencodeSession } from "../cli/config.js";
 import { createEstimator } from "../context/tokens.js";
+import {
+  loadCatalogFromCache,
+  providerInfo,
+  resolveProvider,
+} from "../llm/catalog.js";
 import { createClient } from "../llm/openai.js";
 import type { Message, Usage } from "../llm/types.js";
 import { createTools } from "../tools/index.js";
@@ -332,7 +338,9 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
       baseUrl: config.baseUrl,
       model: config.model,
       ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
-      headers: { "x-opencode-session": session },
+      ...(useOpencodeSession(config.provider)
+        ? { headers: { "x-opencode-session": session } }
+        : {}),
     }).complete;
   const parts = createCondition({
     name: condition,
@@ -340,6 +348,7 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
     complete,
     contextWindow: config.contextWindow,
     estimate,
+    model: config.model,
   });
 
   const messages: Message[] = [
@@ -409,7 +418,16 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
 export async function runBench(options: RunBenchOptions): Promise<BenchOutput> {
   const conditions = options.conditions ?? [...CONDITIONS];
   const tasks = loadTasks(options.tasksDir, options.taskIds);
-  const config = readConfig(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const provider = resolveProvider(env);
+  loadCatalogFromCache({
+    home: env.JA_HARNESS_HOME ?? homedir(),
+    provider,
+  });
+  const config = readConfig(env, {
+    provider,
+    catalog: providerInfo(provider),
+  });
   const workRoot = options.workRoot ?? defaultWorkRoot();
   const resultsDir = options.resultsDir ?? "bench/results";
   const turnTimeoutMs = options.turnTimeoutMs ?? TURN_TIMEOUT_MS;

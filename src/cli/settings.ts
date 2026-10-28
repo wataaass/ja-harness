@@ -22,6 +22,7 @@ export type SettingsMcp = {
 };
 
 export type Settings = {
+  provider?: string;
   model?: string;
   effort?: SettingsEffort;
   permission?: SettingsPermission;
@@ -49,6 +50,7 @@ const THEMES: SettingsTheme[] = ["dark", "light", "auto"];
 const DETAILS: SettingsDetails[] = ["brief", "verbose"];
 const ENTERS: SettingsEnter[] = ["send", "newline"];
 const TOP_KEYS = new Set([
+  "provider",
   "model",
   "effort",
   "permission",
@@ -109,6 +111,13 @@ function readFile(
       continue;
     }
     switch (key) {
+      case "provider":
+        if (typeof value === "string" && value.trim() !== "") {
+          values.provider = value;
+        } else {
+          warnings.push(messages.settings.notString(path, key));
+        }
+        break;
       case "model":
         if (typeof value === "string" && value.trim() !== "") {
           values.model = value;
@@ -403,6 +412,10 @@ function applyEnv(
   env: Record<string, string | undefined>,
 ): Settings {
   const next: Settings = { ...settings };
+  const provider = env.JA_HARNESS_PROVIDER;
+  if (provider !== undefined && provider !== "") {
+    next.provider = provider;
+  }
   const model = env.JA_HARNESS_MODEL;
   if (model !== undefined && model !== "") {
     next.model = model;

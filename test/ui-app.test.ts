@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Complete, Tool } from "../src/agent/loop.js";
+import { setLoadedModels } from "../src/llm/models.js";
 import type { Completion, Message, Usage } from "../src/llm/types.js";
 import type { connectMcp, McpToolInfo } from "../src/mcp/hub.js";
 import type { Confirm, Decision } from "../src/tools/confirm.js";
@@ -1510,6 +1511,36 @@ describe("runApp のセッション", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("/model は選んでいる行を中心に10行だけ出して、ほかを知らせる", async () => {
+    const models = Array.from({ length: 15 }, (_, index) => ({
+      id: `m${index}`,
+      label: `m${index}`,
+      prices: { input: 1, cachedInput: 0.1, output: 2 },
+      efforts: ["low", "medium", "high"],
+      defaultEffort: "high",
+    }));
+    setLoadedModels(models);
+    try {
+      const { complete } = sequence([]);
+      const { input, output, result } = start({ complete, model: "m7" });
+
+      input.send("/model\r");
+      await waitFor(output, "↑ ほか 2");
+      await waitFor(output, "↓ ほか 3");
+      const text = stripAnsi(output.text);
+      expect(text).not.toContain("m0 ");
+      expect(text).toContain("m2 ");
+      expect(text).toContain("m11 ");
+      expect(text).not.toContain("m12 ");
+      input.send("\x1b");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(await close(input, output, result)).toBe(0);
+    } finally {
+      setLoadedModels([]);
     }
   });
 

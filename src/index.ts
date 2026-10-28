@@ -12,7 +12,7 @@ import {
   loadSkills,
 } from "./agent/skills.js";
 import { runBenchCli } from "./bench/cli.js";
-import { readConfig } from "./cli/config.js";
+import { readConfig, useOpencodeSession } from "./cli/config.js";
 import { createTerminalConfirm } from "./cli/confirm.js";
 import { formatToolStart } from "./cli/events.js";
 import { loadSettings } from "./cli/settings.js";
@@ -20,6 +20,13 @@ import { formatUsage } from "./cli/usage.js";
 import { createContextManager, DEFAULT_CONTEXT } from "./context/manager.js";
 import { createFileSaver, limitToolResult } from "./context/spill.js";
 import { createEstimator } from "./context/tokens.js";
+import {
+  loadCatalogFromCache,
+  providerInfo,
+  resolveProvider,
+  startCatalogRefresh,
+} from "./llm/catalog.js";
+import { modelPrices } from "./llm/models.js";
 import { createClient } from "./llm/openai.js";
 import type { Message } from "./llm/types.js";
 import { connectMcp } from "./mcp/hub.js";
@@ -89,14 +96,33 @@ async function main(): Promise<number> {
   }
   if (rest.length === 0) {
     if (process.stdin.isTTY === true && process.stdout.isTTY === true) {
-      const { contextWindow, ...clientConfig } = readConfig(process.env);
+      const home = process.env.JA_HARNESS_HOME ?? homedir();
+      const { settings } = loadSettings({
+        cwd: process.cwd(),
+        home,
+        env: process.env,
+      });
+      const provider = resolveProvider(process.env, settings.provider);
+      loadCatalogFromCache({ home, provider });
+      startCatalogRefresh({ home, provider });
+      const {
+        contextWindow,
+        provider: _provider,
+        ...clientConfig
+      } = readConfig(process.env, {
+        provider,
+        model: settings.model,
+        catalog: providerInfo(provider),
+      });
       const session = randomUUID();
       const makeComplete = (model: string, effort?: string) => {
         const client = createClient({
           ...clientConfig,
           model,
           ...(effort === undefined ? {} : { reasoningEffort: effort }),
-          headers: { "x-opencode-session": session },
+          ...(useOpencodeSession(provider)
+            ? { headers: { "x-opencode-session": session } }
+            : {}),
         });
         return client.complete;
       };
@@ -105,7 +131,7 @@ async function main(): Promise<number> {
         output: process.stdout,
         env: process.env,
         cwd: process.cwd(),
-        home: process.env.JA_HARNESS_HOME ?? homedir(),
+        home,
         makeComplete,
         contextWindow,
         model: clientConfig.model,
@@ -126,12 +152,23 @@ async function main(): Promise<number> {
   }
 
   const instruction = rest.join(" ");
-  const { contextWindow, ...clientConfig } = readConfig(process.env);
   const home = process.env.JA_HARNESS_HOME ?? homedir();
   const { settings } = loadSettings({
     cwd: process.cwd(),
     home,
     env: process.env,
+  });
+  const provider = resolveProvider(process.env, settings.provider);
+  loadCatalogFromCache({ home, provider });
+  startCatalogRefresh({ home, provider });
+  const {
+    contextWindow,
+    provider: _provider,
+    ...clientConfig
+  } = readConfig(process.env, {
+    provider,
+    model: settings.model,
+    catalog: providerInfo(provider),
   });
   const mcpServers = resolveServers(settings.mcp, {
     onWarning: (warning) => process.stderr.write(`${warning}\n`),
@@ -147,19 +184,27 @@ async function main(): Promise<number> {
     builtinDir: builtinSkillsDir(),
     disabled: settings.skills?.disabled ?? [],
   });
+  const selectedModel = settings.model ?? clientConfig.model;
   const client = createClient({
     ...clientConfig,
-    model: settings.model ?? clientConfig.model,
+    model: selectedModel,
     ...(settings.effort === undefined
       ? {}
       : { reasoningEffort: settings.effort }),
-    headers: { "x-opencode-session": randomUUID() },
+    ...(useOpencodeSession(provider)
+      ? { headers: { "x-opencode-session": randomUUID() } }
+      : {}),
   });
   const estimate = createEstimator();
   const saver = createFileSaver(join(process.cwd(), ".ja-harness", "out"));
   const save = (text: string) => relative(process.cwd(), saver(text));
+  const prices = modelPrices(selectedModel);
   const manager = createContextManager({
-    config: { ...DEFAULT_CONTEXT, contextWindow },
+    config: {
+      ...DEFAULT_CONTEXT,
+      contextWindow,
+      ...(prices === undefined ? {} : { prices }),
+    },
     complete: client.complete,
     estimate,
   });
