@@ -34,7 +34,9 @@ API は OpenAI 互換。既定は OpenCode Go（`JA_HARNESS_BASE_URL`・`JA_HARN
 
 スキル: `~/.ja-harness/skills/<名前>/SKILL.md`（作業フォルダの `.ja-harness/skills/` も）に置く。AI には名前と説明だけを渡し、使うときに本文を読む。`/skills` で有効・無効を切り替え（無効にした分はトークンを使わない）、`/skills add <GitHub の URL かフォルダ>` で入れる、`/<スキル名>` で呼ぶ。「スキルを作って」と頼むと標準の `skill-creator` が使われる。
 
-主なコマンド: `/mode`・`/permission`・`/model`・`/undo`・`/resume`・`/clear`・`/compact`・`/context`・`/skills`・`/details`・`/help`。`@` でファイルを指定できる。
+MCP: 設定の `mcp.servers` に書いた MCP サーバー（stdio）につなぐ。`/mcp add <名前> <command> [args...]` でも足せる。AI には道具の名前と1文だけを渡し、使うときに引数の形を読ませる。道具は実行の前に確認する。`/mcp` で有効・無効を切り替える（次の `/clear` か起動から効く）。標準で [nihongo-kit](https://github.com/wataaass/nihongo-kit)（日本語の字数と文章の点検）を入れてあるが、最初は無効。nihongo-kit は npm に公開する前なので、今は手元に置いて `/mcp add nihongo-kit node <nihongo-kit のフォルダ>/dist/index.js` で使う。
+
+主なコマンド: `/mode`・`/permission`・`/model`・`/undo`・`/resume`・`/clear`・`/compact`・`/context`・`/skills`・`/mcp`・`/details`・`/help`。`@` でファイルを指定できる。
 
 品質と料金の測定は `node dist/index.js bench`（`bench/RESULTS.md`）。
 
