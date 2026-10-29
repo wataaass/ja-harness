@@ -56,6 +56,7 @@ import {
   type ModelInfo,
   modelPrices,
 } from "../llm/models.js";
+import { MAX_RETRIES, type OnRetry } from "../llm/openai.js";
 import type { Message, ToolSpec, Usage } from "../llm/types.js";
 import { connectMcp, type McpHub, type McpToolInfo } from "../mcp/hub.js";
 import { type ResolvedServer, resolveServers } from "../mcp/servers.js";
@@ -130,7 +131,7 @@ export type AppOptions = {
   env: NodeJS.ProcessEnv;
   cwd: string;
   home?: string;
-  makeComplete: (model: string, effort?: string) => Complete;
+  makeComplete: (model: string, effort?: string, onRetry?: OnRetry) => Complete;
   createTools?: (confirm: Confirm, plan?: PlanHandler) => Tool[];
   connectMcp?: typeof connectMcp;
   contextWindow: number;
@@ -376,7 +377,12 @@ export async function runApp(o: AppOptions): Promise<number> {
   let effort =
     o.effort ?? settings.effort ?? findModel(model)?.defaultEffort ?? "high";
 
-  const currentComplete = (): Complete => o.makeComplete(model, effort);
+  const onRetry: OnRetry = (attempt, waitMs) => {
+    const seconds = Math.ceil(waitMs / 1000);
+    emit([theme.dim(` ${messages.app.retry(seconds, attempt, MAX_RETRIES)}`)]);
+  };
+  const currentComplete = (): Complete =>
+    o.makeComplete(model, effort, onRetry);
 
   function createManager() {
     const prices = o.prices ?? modelPrices(model);

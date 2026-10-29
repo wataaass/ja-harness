@@ -101,6 +101,8 @@ export const ja = {
   app: {
     exitAgain: "Press Ctrl+D again to exit",
     thinking: "Thinking…",
+    retry: (seconds: number, attempt: number, max: number) =>
+      `混んでいるため ${seconds} 秒後に送り直します（${attempt}/${max}）`,
     duringWork: "(sent while working)",
     moreLines: (n: number) => `…${n} more lines`,
     busy: " Available after the current task",

@@ -27,13 +27,14 @@ import {
   startCatalogRefresh,
 } from "./llm/catalog.js";
 import { modelPrices } from "./llm/models.js";
-import { createClient } from "./llm/openai.js";
+import { createClient, MAX_RETRIES, type OnRetry } from "./llm/openai.js";
 import type { Message } from "./llm/types.js";
 import { connectMcp } from "./mcp/hub.js";
 import { resolveServers } from "./mcp/servers.js";
 import { createTools } from "./tools/index.js";
 import { formatMcpList } from "./tools/mcp.js";
 import { runApp } from "./ui/app.js";
+import { getMessages } from "./ui/i18n/index.js";
 import { formatVersion, VERSION } from "./version.js";
 
 const HELP = `使い方: ja-harness [--resume <id> | --continue]
@@ -115,7 +116,11 @@ async function main(): Promise<number> {
         catalog: providerInfo(provider),
       });
       const session = randomUUID();
-      const makeComplete = (model: string, effort?: string) => {
+      const makeComplete = (
+        model: string,
+        effort?: string,
+        onRetry?: OnRetry,
+      ) => {
         const client = createClient({
           ...clientConfig,
           model,
@@ -123,6 +128,7 @@ async function main(): Promise<number> {
           ...(useOpencodeSession(provider)
             ? { headers: { "x-opencode-session": session } }
             : {}),
+          ...(onRetry === undefined ? {} : { onRetry }),
         });
         return client.complete;
       };
@@ -185,6 +191,7 @@ async function main(): Promise<number> {
     disabled: settings.skills?.disabled ?? [],
   });
   const selectedModel = settings.model ?? clientConfig.model;
+  const uiMessages = getMessages(settings.language?.ui);
   const client = createClient({
     ...clientConfig,
     model: selectedModel,
@@ -194,6 +201,12 @@ async function main(): Promise<number> {
     ...(useOpencodeSession(provider)
       ? { headers: { "x-opencode-session": randomUUID() } }
       : {}),
+    onRetry: (attempt, waitMs) => {
+      const seconds = Math.ceil(waitMs / 1000);
+      process.stderr.write(
+        `${uiMessages.app.retry(seconds, attempt, MAX_RETRIES)}\n`,
+      );
+    },
   });
   const estimate = createEstimator();
   const saver = createFileSaver(join(process.cwd(), ".ja-harness", "out"));

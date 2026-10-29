@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  type ClientOptions,
   createClient,
   parseUsage,
   readSse,
@@ -503,7 +504,7 @@ describe("complete", () => {
   });
 
   it("2xx でないときは本文の先頭 500 文字を添えて投げる", async () => {
-    const { fetch } = mockFetch(new Response("x".repeat(600), { status: 500 }));
+    const { fetch } = mockFetch(new Response("x".repeat(600), { status: 400 }));
     const client = createClient({
       baseUrl: "https://example.test/v1",
       model: "test-model",
@@ -511,7 +512,283 @@ describe("complete", () => {
     });
 
     await expect(client.complete([], [])).rejects.toMatchObject({
-      message: `HTTP 500: ${"x".repeat(500)}`,
+      message: `HTTP 400: ${"x".repeat(500)}`,
     });
+  });
+});
+
+describe("再試行", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function okResponse(): Response {
+    return responseFromChunks([
+      sse({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }),
+      "data: [DONE]\n\n",
+    ]);
+  }
+
+  function status(
+    code: number,
+    body = "",
+    headers: Record<string, string> = {},
+  ): Response {
+    return new Response(body, { status: code, headers });
+  }
+
+  function fetchSteps(steps: (Response | Error)[]): {
+    fetch: typeof fetch;
+    calls: FetchCall[];
+  } {
+    const calls: FetchCall[] = [];
+    const fetchMock = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      calls.push({ input, init });
+      const step = steps[calls.length - 1];
+      if (step === undefined) {
+        throw new Error("想定より多く送っています");
+      }
+      if (step instanceof Error) {
+        throw step;
+      }
+      return step;
+    }) as unknown as typeof fetch;
+    return { fetch: fetchMock, calls };
+  }
+
+  function recordSleep(): {
+    sleep: (ms: number) => Promise<void>;
+    waits: number[];
+  } {
+    const waits: number[] = [];
+    return {
+      sleep: async (ms: number) => {
+        waits.push(ms);
+      },
+      waits,
+    };
+  }
+
+  function makeClient(
+    options: Pick<ClientOptions, "fetch" | "sleep" | "onRetry">,
+  ) {
+    return createClient({
+      baseUrl: "https://example.test/v1",
+      model: "test-model",
+      ...options,
+    });
+  }
+
+  it("Retry-After の秒数を待ってから送り直す", async () => {
+    const { fetch, calls } = fetchSteps([
+      status(429, "", { "retry-after": "7" }),
+      okResponse(),
+    ]);
+    const { sleep, waits } = recordSleep();
+
+    const completion = await makeClient({ fetch, sleep }).complete([], []);
+
+    expect(completion.message.content).toBe("ok");
+    expect(waits).toEqual([7000]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("Retry-After の日付を待つ", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-29T00:00:00Z"));
+    const date = new Date("2026-10-29T00:00:20Z").toUTCString();
+    const { fetch } = fetchSteps([
+      status(503, "", { "retry-after": date }),
+      okResponse(),
+    ]);
+    const { sleep, waits } = recordSleep();
+
+    await makeClient({ fetch, sleep }).complete([], []);
+
+    expect(waits).toEqual([20000]);
+  });
+
+  it("本文の「after N s」「after Ns」を待つ", async () => {
+    const { fetch, calls } = fetchSteps([
+      status(
+        429,
+        JSON.stringify({
+          error: { message: "混んでいます。retry shortly (after 24 s)" },
+        }),
+      ),
+      status(429, "rate limited, after 9s"),
+      okResponse(),
+    ]);
+    const { sleep, waits } = recordSleep();
+
+    await makeClient({ fetch, sleep }).complete([], []);
+
+    expect(waits).toEqual([24000, 9000]);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("ヘッダーも本文の指定もなければ 2, 4, 8, 16 秒待つ", async () => {
+    const { fetch, calls } = fetchSteps([
+      status(500),
+      status(502),
+      status(503),
+      status(504),
+      okResponse(),
+    ]);
+    const { sleep, waits } = recordSleep();
+
+    await makeClient({ fetch, sleep }).complete([], []);
+
+    expect(waits).toEqual([2000, 4000, 8000, 16000]);
+    expect(calls).toHaveLength(5);
+  });
+
+  it("待ち時間は 60 秒で打ち切る", async () => {
+    const { fetch } = fetchSteps([
+      status(429, "", { "retry-after": "300" }),
+      status(429, "after 120 s"),
+      okResponse(),
+    ]);
+    const { sleep, waits } = recordSleep();
+
+    await makeClient({ fetch, sleep }).complete([], []);
+
+    expect(waits).toEqual([60000, 60000]);
+  });
+
+  it("4 回送り直しても駄目なら最後のエラーを投げる", async () => {
+    const { fetch, calls } = fetchSteps(
+      Array.from({ length: 5 }, () => status(503, "混んでいます")),
+    );
+    const { sleep, waits } = recordSleep();
+    const onRetry = vi.fn();
+
+    await expect(
+      makeClient({ fetch, sleep, onRetry }).complete([], []),
+    ).rejects.toMatchObject({ message: "HTTP 503: 混んでいます" });
+
+    expect(calls).toHaveLength(5);
+    expect(waits).toHaveLength(4);
+    expect(onRetry).toHaveBeenCalledTimes(4);
+  });
+
+  it("送り直す前の待ちは中断されたらすぐ投げる", async () => {
+    const controller = new AbortController();
+    const { fetch, calls } = fetchSteps([
+      status(429, "", { "retry-after": "10" }),
+      okResponse(),
+    ]);
+    const client = makeClient({
+      fetch,
+      sleep: async () => {
+        controller.abort();
+      },
+    });
+
+    const error = await client
+      .complete([], [], { signal: controller.signal })
+      .catch((e: unknown) => e);
+
+    expect((error as Error).name).toBe("AbortError");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("標準の待ちも中断されたらすぐ止まる", async () => {
+    const controller = new AbortController();
+    const { fetch, calls } = fetchSteps([
+      status(429, "", { "retry-after": "60" }),
+      okResponse(),
+    ]);
+    const client = makeClient({
+      fetch,
+      onRetry: () => controller.abort(),
+    });
+
+    const error = await client
+      .complete([], [], { signal: controller.signal })
+      .catch((e: unknown) => e);
+
+    expect((error as Error).name).toBe("AbortError");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("400 は送り直さずそのまま投げる", async () => {
+    const { fetch, calls } = fetchSteps([status(400, "bad request")]);
+    const { sleep, waits } = recordSleep();
+    const onRetry = vi.fn();
+
+    await expect(
+      makeClient({ fetch, sleep, onRetry }).complete([], []),
+    ).rejects.toMatchObject({ message: "HTTP 400: bad request" });
+
+    expect(calls).toHaveLength(1);
+    expect(waits).toEqual([]);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it("通信エラーは送り直す", async () => {
+    const { fetch, calls } = fetchSteps([
+      new TypeError("fetch failed"),
+      okResponse(),
+    ]);
+    const { sleep, waits } = recordSleep();
+
+    const completion = await makeClient({ fetch, sleep }).complete([], []);
+
+    expect(completion.message.content).toBe("ok");
+    expect(waits).toEqual([2000]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("本文を読み始めたあとは送り直さない", async () => {
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(
+              encoder.encode(
+                sse({ choices: [{ delta: { content: "こん" } }] }),
+              ),
+            );
+          } else {
+            controller.error(new TypeError("fetch failed"));
+          }
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const { fetch, calls } = fetchSteps([new Response(body)]);
+    const { sleep, waits } = recordSleep();
+    const onText = vi.fn();
+
+    await expect(
+      makeClient({ fetch, sleep }).complete([], [], { onText }),
+    ).rejects.toMatchObject({ message: "fetch failed" });
+
+    expect(onText).toHaveBeenCalledWith("こん");
+    expect(calls).toHaveLength(1);
+    expect(waits).toEqual([]);
+  });
+
+  it("onRetry に回数・待ち時間・理由を渡す", async () => {
+    const { fetch } = fetchSteps([
+      status(429, "", { "retry-after": "3" }),
+      status(502),
+      okResponse(),
+    ]);
+    const { sleep } = recordSleep();
+    const onRetry = vi.fn();
+
+    await makeClient({ fetch, sleep, onRetry }).complete([], []);
+
+    expect(onRetry.mock.calls).toEqual([
+      [1, 3000, "HTTP 429"],
+      [2, 4000, "HTTP 502"],
+    ]);
   });
 });
