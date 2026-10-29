@@ -1,6 +1,6 @@
 # 進捗
 
-最終更新: 2026-10-28（夜）
+最終更新: 2026-10-29
 
 ## 今の状態
 - main: 最初のコミット（README・CLAUDE.md・DECISIONS.md・LICENSE）
@@ -28,6 +28,8 @@
 - 2026-10-28: トークン削減を見直した。見つけた問題: (1) 価格で決める masking は、どこからも `prices` を渡していないので本番で一度も動いていない。中身も 4,000 トークン超の結果を切るだけで、設計の「1行の跡に置き換える・10件ごと・キャッシュが冷えたら隠す」は未実装 (2) 道具を1つずつ呼んで往復が多い (3) 要約に失敗すると毎回やり直す (4) エラーの結果を切らない (5) 前のやりとりの推論まで見積もりに数える（API は捨てていて料金はかからないと確かめた）。(2)〜(5) を PR #6 で直した（テスト585件）。bench（DeepSeek、9件×3回）では料金も合格も変わらなかった（`bench/RESULTS.md`）
 
 - 2026-10-28（夜、続き）: masking を作り直した（DECISIONS.md の「古い道具の結果は…」）。models.dev の料金表、`bench --sim`（API を呼ばない測定）、本物の bench の `--context`、何回かやりとりする課題（multi-todo・multi-invoice・multi-config）を足した。テスト652件。結果は `bench/RESULTS.md`
+
+- 2026-10-29: 難しい課題（hard-*、4問）と、4問を1つの会話で続ける hard-session を bench に足し、解き終わるまでの料金で3条件を比べた（`bench/RESULTS.md`）。4問では差なし、hard-session では default だけが解き切った（各1回）。none は 429 で毎回止まったので、429・5xx の送り直しを入れた（Haiku 5.5 の subagent が作った。DeepSeek 自体が混んで受け付けなかったため）。テスト668件
 
 ## 次にやること
 1. 本人が Windows で、PowerShell で動くシェル・確認のカードの目的・英語の表示・決まりのファイル・スキル・MCP（`/mcp add` でサーバーを足し、`/clear` のあと使わせる）を確かめる（Windows での実行はまだ一度も確かめていない）。起動は `cd $HOME\jh-test` のあと `node $HOME\ja-harness\dist\index.js`
