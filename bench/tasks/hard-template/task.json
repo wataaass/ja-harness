@@ -1,0 +1,6 @@
+{
+  "id": "hard-template",
+  "kind": "generate",
+  "maxSteps": 120,
+  "prompt": "小さなテンプレートエンジンを docs/SPEC.md の仕様どおりに仕上げてください。今は変数の表示と upper・lower のフィルターしか動きません。条件分岐、繰り返し、フィルターの連鎖と引数、HTML のエスケープ、include、空白の制御、行番号つきのエラーを足す必要があります。既存の公開の関数 render(template, data, options) の形は変えないでください。npm test も通るようにしてください。"
+}

@@ -1,17 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Complete, type LoopEvent, runTurn } from "../agent/loop.js";
 import { SYSTEM_PROMPT } from "../agent/prompt.js";
-import { readConfig } from "../cli/config.js";
+import { createRepeatTracker } from "../agent/repeat.js";
+import { readConfig, useOpencodeSession } from "../cli/config.js";
 import { createEstimator } from "../context/tokens.js";
+import {
+  loadCatalogFromCache,
+  providerInfo,
+  resolveProvider,
+} from "../llm/catalog.js";
 import { createClient } from "../llm/openai.js";
 import type { Message, Usage } from "../llm/types.js";
 import { createTools } from "../tools/index.js";
 import {
   CONDITIONS,
   type ConditionName,
+  type ContextOverride,
   createCondition,
+  mergeContext,
 } from "./conditions.js";
 import { loadTasks, type TaskKind } from "./tasks.js";
 import {
@@ -24,8 +33,15 @@ import {
 } from "./workspace.js";
 
 export const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_MAX_STEPS = 30;
 
 export type StopReason = "done" | "max-steps" | "error";
+
+export type ContextActionCounts = {
+  mask: number;
+  prune: number;
+  summary: number;
+};
 
 export type BenchRecord = {
   task: string;
@@ -36,8 +52,10 @@ export type BenchRecord = {
   passed: number;
   failed: number;
   steps: number;
+  turns: number;
   stop: StopReason;
   usage: Usage;
+  contextActions: ContextActionCounts;
   durationMs: number;
   model: string;
   error?: string;
@@ -51,6 +69,7 @@ export type RunBenchOptions = {
   concurrency: number;
   workRoot?: string;
   resultsDir?: string;
+  context?: ContextOverride;
   env?: NodeJS.ProcessEnv;
   turnTimeoutMs?: number;
   onProgress?: (line: string) => void;
@@ -211,6 +230,16 @@ function averageCost(records: BenchRecord[]): number | undefined {
   return costs.length === 0 ? undefined : average(costs);
 }
 
+function averageContextAction(
+  records: BenchRecord[],
+  action: keyof ContextActionCounts,
+): number {
+  const values = records
+    .filter((record) => !isExecutionFailure(record))
+    .map((record) => record.contextActions[action]);
+  return average(values);
+}
+
 export function formatResultsTable(
   records: BenchRecord[],
   conditions: string[],
@@ -219,7 +248,7 @@ export function formatResultsTable(
   const lines: string[] = [`モデル: ${model}`, "条件別"];
 
   const conditionRows: string[][] = [
-    ["条件", "合格", "合格率", "平均料金", "平均steps", "失敗"],
+    ["条件", "合格", "合格率", "平均料金", "平均steps", "平均mask", "失敗"],
   ];
   for (const condition of conditions) {
     const group = records.filter((record) => record.condition === condition);
@@ -231,6 +260,7 @@ export function formatResultsTable(
       percent(stat.total === 0 ? 0 : stat.passed / stat.total),
       cost === undefined ? "—" : money(cost),
       (stat.total === 0 ? 0 : stat.steps / stat.total).toFixed(1),
+      averageContextAction(group, "mask").toFixed(1),
       String(stat.failed),
     ]);
   }
@@ -294,6 +324,7 @@ export type RunOneOptions = {
   workRoot: string;
   config: ReturnType<typeof readConfig>;
   turnTimeoutMs: number;
+  context?: ContextOverride;
   complete?: Complete;
 };
 
@@ -309,8 +340,10 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
     passed: 0,
     failed: 0,
     steps: 0,
+    turns: 0,
     stop: "error",
     usage: zeroUsage(),
+    contextActions: { mask: 0, prune: 0, summary: 0 },
     durationMs: 0,
     model: config.model,
   };
@@ -332,7 +365,9 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
       baseUrl: config.baseUrl,
       model: config.model,
       ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
-      headers: { "x-opencode-session": session },
+      ...(useOpencodeSession(config.provider)
+        ? { headers: { "x-opencode-session": session } }
+        : {}),
     }).complete;
   const parts = createCondition({
     name: condition,
@@ -340,19 +375,21 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
     complete,
     contextWindow: config.contextWindow,
     estimate,
+    model: config.model,
+    context: mergeContext(options.context),
   });
 
-  const messages: Message[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: task.prompt },
-  ];
+  const messages: Message[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  const tools = createTools(workspace, async () => true);
+  const repeat = createRepeatTracker();
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), turnTimeoutMs);
-
-  const eventUsage = zeroUsage();
+  let eventUsage = zeroUsage();
   let eventSteps = 0;
   const onEvent = (event: LoopEvent): void => {
+    if (event.type === "context") {
+      record.contextActions[event.action] += 1;
+      return;
+    }
     if (event.type !== "step-end") {
       return;
     }
@@ -361,26 +398,42 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
   };
 
   let runError: string | undefined;
-  try {
-    const result = await runTurn({
-      complete,
-      tools: createTools(workspace, async () => true),
-      messages,
-      maxSteps: 30,
-      signal: controller.signal,
-      onEvent,
-      ...parts,
-    });
-    record.steps = result.steps;
-    record.stop = result.stop;
-    record.usage = result.usage;
-  } catch (error) {
-    record.steps = eventSteps;
-    record.usage = eventUsage;
-    record.stop = "error";
-    runError = controller.signal.aborted ? "時間切れ" : errorMessage(error);
-  } finally {
-    clearTimeout(timer);
+  record.stop = "done";
+  for (const [index, turn] of task.turns.entries()) {
+    messages.push({ role: "user", content: turn });
+    eventUsage = zeroUsage();
+    eventSteps = 0;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), turnTimeoutMs);
+    try {
+      const result = await runTurn({
+        complete,
+        tools,
+        messages,
+        maxSteps: task.maxSteps ?? DEFAULT_MAX_STEPS,
+        signal: controller.signal,
+        onEvent,
+        repeat,
+        ...parts,
+      });
+      record.steps += result.steps;
+      addUsage(record.usage, result.usage);
+      record.turns = index + 1;
+      record.stop = result.stop;
+      if (result.stop !== "done") {
+        break;
+      }
+    } catch (error) {
+      record.steps += eventSteps;
+      addUsage(record.usage, eventUsage);
+      record.turns = index + 1;
+      record.stop = "error";
+      runError = controller.signal.aborted ? "時間切れ" : errorMessage(error);
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   let gradeError: string | undefined;
@@ -409,7 +462,16 @@ export async function runOne(options: RunOneOptions): Promise<BenchRecord> {
 export async function runBench(options: RunBenchOptions): Promise<BenchOutput> {
   const conditions = options.conditions ?? [...CONDITIONS];
   const tasks = loadTasks(options.tasksDir, options.taskIds);
-  const config = readConfig(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const provider = resolveProvider(env);
+  loadCatalogFromCache({
+    home: env.JA_HARNESS_HOME ?? homedir(),
+    provider,
+  });
+  const config = readConfig(env, {
+    provider,
+    catalog: providerInfo(provider),
+  });
   const workRoot = options.workRoot ?? defaultWorkRoot();
   const resultsDir = options.resultsDir ?? "bench/results";
   const turnTimeoutMs = options.turnTimeoutMs ?? TURN_TIMEOUT_MS;
@@ -445,6 +507,7 @@ export async function runBench(options: RunBenchOptions): Promise<BenchOutput> {
         workRoot,
         config,
         turnTimeoutMs,
+        ...(options.context === undefined ? {} : { context: options.context }),
       });
       records[index] = record;
       onProgress(formatProgress(index + 1, jobs.length, record));

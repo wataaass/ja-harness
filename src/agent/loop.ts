@@ -24,7 +24,12 @@ export type LoopEvent =
   | { type: "tool-start"; name: string; args: unknown }
   | { type: "tool-end"; name: string; result: string; isError: boolean }
   | { type: "step-end"; usage: Usage }
-  | { type: "context"; action: "prune" | "summary"; savedTokens: number };
+  | { type: "input-delivered"; count: number }
+  | {
+      type: "context";
+      action: "prune" | "summary" | "mask";
+      savedTokens: number;
+    };
 
 export type RunOptions = {
   complete: Complete;
@@ -39,6 +44,7 @@ export type RunOptions = {
   };
   repeat?: RepeatTracker;
   limitResult?: (text: string, tool: Tool | undefined) => string;
+  drainInput?: () => Message[];
 };
 
 export type RunResult = {
@@ -46,6 +52,45 @@ export type RunResult = {
   steps: number;
   usage: Usage;
 };
+
+export function repairMessages(messages: Message[]): Message[] {
+  let assistantIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message !== undefined &&
+      message.role === "assistant" &&
+      message.toolCalls !== undefined
+    ) {
+      assistantIndex = index;
+      break;
+    }
+  }
+  if (assistantIndex === -1) {
+    return messages;
+  }
+  const assistant = messages[assistantIndex];
+  if (assistant === undefined || assistant.role !== "assistant") {
+    return messages;
+  }
+  const resolved = new Set<string>();
+  for (let index = assistantIndex + 1; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message !== undefined && message.role === "tool") {
+      resolved.add(message.toolCallId);
+    }
+  }
+  for (const call of assistant.toolCalls ?? []) {
+    if (!resolved.has(call.id)) {
+      messages.push({
+        role: "tool",
+        toolCallId: call.id,
+        content: "Interrupted by the user.",
+      });
+    }
+  }
+  return messages;
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -192,7 +237,7 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
         }
       }
 
-      if (!isError && opts.limitResult !== undefined) {
+      if (opts.limitResult !== undefined) {
         result = opts.limitResult(result, usedTool);
       }
 
@@ -209,6 +254,12 @@ export async function runTurn(opts: RunOptions): Promise<RunResult> {
 
     if (steps >= maxSteps) {
       return { stop: "max-steps", steps, usage };
+    }
+
+    if (opts.drainInput !== undefined) {
+      const delivered = opts.drainInput();
+      messages.push(...delivered);
+      onEvent?.({ type: "input-delivered", count: delivered.length });
     }
   }
 }

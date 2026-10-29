@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Tool } from "../agent/loop.js";
-import type { Confirm } from "./confirm.js";
-import { displayPath, resolvePath } from "./path.js";
+import { type Confirm, toDecision } from "./confirm.js";
+import { displayPath, isOutsidePath, resolvePath } from "./path.js";
 
 const DETAIL_LINES = 40;
 
@@ -21,7 +21,16 @@ function toLines(text: string): string[] {
   return lines;
 }
 
-export function createWriteTool(cwd: string, confirm: Confirm): Tool {
+function declined(message: string, reason: string | undefined): string {
+  const text = reason?.trim() ?? "";
+  return text === "" ? message : `${message}\nReason from the user: ${text}`;
+}
+
+export function createWriteTool(
+  cwd: string,
+  confirm: Confirm,
+  beforeWrite?: (absPath: string) => void,
+): Tool {
   return {
     name: "write",
     description: "Create a new file. Fails if the file already exists.",
@@ -61,20 +70,27 @@ export function createWriteTool(cwd: string, confirm: Confirm): Tool {
       const shown = lines.slice(0, DETAIL_LINES);
       let detail = shown.join("\n");
       if (lines.length > DETAIL_LINES) {
-        detail += `\n…ほか${lines.length - DETAIL_LINES}行`;
+        detail += `\n…${lines.length - DETAIL_LINES} more lines`;
       }
 
       signal?.throwIfAborted();
-      const accepted = await confirm({
-        tool: "write",
-        title: `${path} を作ります（${lines.length}行）`,
-        detail,
-      });
-      if (!accepted) {
-        return "The user declined this write. Ask what they want instead.";
+      const decision = toDecision(
+        await confirm({
+          tool: "write",
+          title: `Write ${path} (${lines.length} lines)`,
+          detail,
+          ...(isOutsidePath(cwd, abs) ? { outside: true } : {}),
+        }),
+      );
+      if (!decision.allow) {
+        return declined(
+          "The user declined this write. Ask what they want instead.",
+          decision.reason,
+        );
       }
 
       signal?.throwIfAborted();
+      beforeWrite?.(abs);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, args.content, "utf8");
       return `Created ${path} (${lines.length} lines).`;

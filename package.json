@@ -12,7 +12,8 @@
     "ja-harness": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "skills"
   ],
   "scripts": {
     "build": "tsc",
@@ -28,5 +29,8 @@
     "@types/node": "^26.6.5",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
   }
 }

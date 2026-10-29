@@ -4,7 +4,7 @@ import { parseBenchArgs } from "../src/bench/cli.js";
 describe("parseBenchArgs", () => {
   it("既定値を返す", () => {
     expect(parseBenchArgs([])).toEqual({
-      conditions: ["none", "input-only", "default"],
+      conditions: ["none", "input-only", "default", "mask-off"],
       reps: 3,
       concurrency: 3,
       tasksDir: "bench/tasks",
@@ -39,6 +39,25 @@ describe("parseBenchArgs", () => {
       validate: false,
       help: false,
     });
+  });
+
+  it("--context の JSON を読む", () => {
+    expect(
+      parseBenchArgs([
+        "--context",
+        '{"mode":"always","mask":{"window":2},"prune":{"maxTokens":1000}}',
+      ]).context,
+    ).toEqual({
+      mode: "always",
+      mask: { window: 2 },
+      prune: { maxTokens: 1000 },
+    });
+  });
+
+  it("--prev-need を読む", () => {
+    expect(parseBenchArgs(["--prev-need", "0.45"]).prevNeed).toBe(0.45);
+    expect(() => parseBenchArgs(["--prev-need", "1.5"])).toThrow("0から1");
+    expect(() => parseBenchArgs(["--prev-need", "x"])).toThrow("0から1");
   });
 
   it("validate・prepare・grade・help を読む", () => {

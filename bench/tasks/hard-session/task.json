@@ -1,0 +1,11 @@
+{
+  "id": "hard-session",
+  "kind": "fix",
+  "turns": [
+    "このリポジトリには4つの小さなプロジェクト（inventory/・template/・query/・migrate/）があります。今日は順に直していきます。まず inventory/ の、注文・在庫・出荷を扱う社内ツールです。顧客から「在庫が足りているのに注文が通らない」「合計金額が合わない」「日別の売上の数字が日によってずれる」という報告が来ています。仕様は inventory/docs/SPEC.md にまとめてあります。報告と仕様をもとに原因を調べて直し、inventory/ のテスト（node --test inventory/test/）も通してください。",
+    "次は template/ の小さなテンプレートエンジンを template/docs/SPEC.md の仕様どおりに仕上げてください。今は変数の表示と upper・lower のフィルターしか動きません。条件分岐、繰り返し、フィルターの連鎖と引数、HTML のエスケープ、include、空白の制御、行番号つきのエラーを足す必要があります。既存の公開の関数 render(template, data, options) の形は変えないでください。template/ のテスト（node --test template/test/）も通るようにしてください。",
+    "次は query/ の問い合わせエンジンです。WHERE の結果がおかしいという報告があります。原因を直したうえで、query/docs/SPEC.md にある ORDER BY（複数のキーと ASC・DESC、NULL は最後）、LIMIT と OFFSET、GROUP BY と集計関数 COUNT・SUM・AVG・MIN・MAX、HAVING を使えるようにしてください。query(tables, sql) の形は変えないでください。query/ のテスト（node --test query/test/）も通るようにしてください。",
+    "最後に migrate/ のジョブの仕組みを async/await に書き換えてください。migrate/docs/API.md の公開の関数は、コールバックでも Promise でも使えるようにしてください。あわせて、リトライの間隔がおかしい、同時に動く数が上限を超える、という報告も直してください。migrate/ のテスト（node --test migrate/test/）も通るようにしてください。最後に、ここまで直した4つのプロジェクトのテストが全部通ることを npm test で確かめてください。"
+  ],
+  "maxSteps": 120
+}

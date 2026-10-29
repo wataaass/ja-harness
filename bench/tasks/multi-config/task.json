@@ -1,0 +1,9 @@
+{
+  "id": "multi-config",
+  "kind": "fix",
+  "turns": [
+    "設定ファイルの読み込みで、ファイルに書いた値が既定値に負けています。`src/load.js` の `loadConfig(path)` を直し、`src/defaults.js` の `DEFAULT_CONFIG` を土台にして、設定ファイルの値で上書きしてください。`db` のような入れ子のオブジェクトも、片方だけあれば足りないキーは既定値で埋め、両方にあればファイルの値を使ってください。設定ファイルは JSON で、`port` だけ、`db.pool` だけ、といった一部のキーだけでも読めるようにしてください。読み込んだあとは今どおり `validateConfig` を通してください。入力を変更しないでください。",
+    "`src/load.js` の `loadConfig(path, options = {})` に、環境変数での上書きを足してください。`options.env` を省略したときは `process.env` を使います。`APP_HOST` は `host`、`APP_PORT` は `port`（整数に変換）、`APP_DEBUG` は `debug`（`\"true\"`・`\"1\"`・`\"yes\"` は true、`\"false\"`・`\"0\"`・`\"no\"` は false）、`APP_LOG_LEVEL` は `logLevel`、`APP_DB_URL` は `db.url` に入れてください。設定されていない（undefined の）環境変数は無視し、空の文字列は値として扱って検証に渡してください。環境変数は設定ファイルより優先してください。変換したあとに `validateConfig` を通してください。`APP_PORT` が整数でないときは、数値に変換した結果をそのまま検証に渡してエラーにしてください。",
+    "`src/validate.js` の `validateConfig(config)` で、おかしな値のときのエラーを分かりやすくしてください。`Error` を投げ、メッセージは次の形にします。`port` は1以上65535以下の整数でなければ `port は1〜65535の整数にしてください（今: 値）`。`host` は空でない文字列でなければ `host は空でない文字列にしてください（今: 値）`。`debug` は真偽値でなければ `debug は真偽値にしてください（今: 値）`。`logLevel` は `debug`・`info`・`warn`・`error` のどれかでなければ `logLevel は debug・info・warn・error のどれかにしてください（今: 値）`。`db.url` は空でない文字列でなければ `db.url は空でない文字列にしてください（今: 値）`。`db.pool` は1以上の整数でなければ `db.pool は1以上の整数にしてください（今: 値）`。`config` や `config.db` がないときも同じ形のエラーにしてください。確かめる順番は `port`・`host`・`debug`・`logLevel`・`db.url`・`db.pool` で、最初に見つかったおかしな値のエラーを投げてください。①②の読み込みから呼ばれたときもこの文が出るようにし、正しい設定はそのまま返してください。"
+  ]
+}

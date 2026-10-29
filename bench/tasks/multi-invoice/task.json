@@ -1,0 +1,8 @@
+{
+  "id": "multi-invoice",
+  "kind": "fix",
+  "turns": [
+    "請求書の合計が合いません。`src/invoice.js` の `calculateInvoice` は、小計から割引を引いた額に税率をかけて税を出し、`total = subtotal - discount + tax` にしてください。割引額は小計の `discountRate` 割合そのもの（例: 1000円の10%なら100円）です。いまは `src/discount.js` の割引額と `src/invoice.js` の税の計算が違うようです。`test/invoice.test.js` の失敗も直し、入力を変更しないでください。丸めは今の `roundYen`（1円未満切り捨て）のままで構いません。",
+    "端数の丸め方を変えてください。`src/money.js` の `roundYen` を四捨五入（`Math.round`）にし、小計は明細ごとに `quantity * unitPrice` を丸めた額の合計にしてください。割引額と税額も `roundYen` で丸めます。たとえば単価10.4円の明細2件は、明細ごとに10円ずつで小計20円です（合計してから丸める21円ではありません）。単価10.5円の明細は11円です。`test/invoice.test.js` も期待に合わせて通るようにしてください。"
+  ]
+}

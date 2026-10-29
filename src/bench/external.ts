@@ -1,6 +1,12 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { readConfig } from "../cli/config.js";
+import {
+  loadCatalogFromCache,
+  providerInfo,
+  resolveProvider,
+} from "../llm/catalog.js";
 import { type BenchRecord, formatResultsTable, writeResults } from "./run.js";
 import { loadTasks } from "./tasks.js";
 import {
@@ -12,7 +18,7 @@ import {
 export type ExternalTask = {
   id: string;
   kind: string;
-  prompt: string;
+  turns: string[];
   workspaces: string[];
 };
 
@@ -55,7 +61,7 @@ export function prepareExternal(options: PrepareExternalOptions): {
       return {
         id: task.id,
         kind: task.kind,
-        prompt: task.prompt,
+        turns: task.turns,
         workspaces,
       };
     }),
@@ -105,7 +111,16 @@ export async function gradeExternal(
 ): Promise<GradeExternalOutput> {
   const workDir = options.workDir ?? join(defaultWorkRoot(), options.name);
   const resultsDir = options.resultsDir ?? "bench/results";
-  const config = readConfig(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const provider = resolveProvider(env);
+  loadCatalogFromCache({
+    home: env.JA_HARNESS_HOME ?? homedir(),
+    provider,
+  });
+  const config = readConfig(env, {
+    provider,
+    catalog: providerInfo(provider),
+  });
   const manifestPath = join(workDir, "tasks.json");
   const manifest = readManifest(manifestPath);
   const tasks = loadTasks(
@@ -136,8 +151,10 @@ export async function gradeExternal(
         passed: grade.passed,
         failed: grade.failed,
         steps: 0,
+        turns: task.turns.length,
         stop: "done",
         usage: { input: 0, cachedInput: 0, output: 0, reasoning: 0 },
+        contextActions: { mask: 0, prune: 0, summary: 0 },
         durationMs: Date.now() - started,
         model: config.model,
       });

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Complete, Tool } from "../src/agent/loop.js";
 import { createCondition, isConditionName } from "../src/bench/conditions.js";
 import { createEstimator } from "../src/context/tokens.js";
+import type { Message, ToolSpec } from "../src/llm/types.js";
 
 const complete: Complete = async () => {
   throw new Error("API は呼ばない");
@@ -66,9 +67,52 @@ describe("createCondition", () => {
     expect(parts.context?.manager).toBeDefined();
   });
 
+  it("モデルの価格を文脈管理に渡す", async () => {
+    const parts = createCondition({
+      name: "default",
+      workspace,
+      complete,
+      contextWindow: 100000,
+      estimate: createEstimator(),
+      model: "deepseek-v4.1-flash",
+      context: { mask: { window: 0, minTokens: 1 } },
+    });
+    const manager = parts.context?.manager;
+    expect(manager).toBeDefined();
+    if (manager === undefined) {
+      return;
+    }
+    const big = `${"a".repeat(50000)}\n${"b".repeat(50000)}`;
+    const list: Message[] = [
+      { role: "system", content: "s" },
+      { role: "user", content: "u" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "1", name: "read", arguments: '{"paths":["a.ts"]}' }],
+      },
+      { role: "tool", toolCallId: "1", content: big },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "2", name: "edit", arguments: '{"path":"a.ts"}' }],
+      },
+      { role: "tool", toolCallId: "2", content: "ok" },
+      { role: "assistant", content: "done" },
+    ];
+    const specs: ToolSpec[] = [tool];
+    for (let index = 0; index < 300; index += 1) {
+      await manager.beforeStep(list, specs, undefined);
+    }
+    expect((list[3] as Extract<Message, { role: "tool" }>).content).toContain(
+      "[Hidden to save tokens:",
+    );
+  });
+
   it("条件名を判定する", () => {
     expect(isConditionName("none")).toBe(true);
     expect(isConditionName("default")).toBe(true);
+    expect(isConditionName("mask-off")).toBe(true);
     expect(isConditionName("other")).toBe(false);
   });
 });

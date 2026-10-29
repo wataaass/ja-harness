@@ -28,8 +28,10 @@ function record(overrides: Partial<BenchRecord> = {}): BenchRecord {
     passed: 3,
     failed: 0,
     steps: 4,
+    turns: 1,
     stop: "done",
     usage: { input: 10, cachedInput: 0, output: 5, reasoning: 0, cost: 0.0021 },
+    contextActions: { mask: 1, prune: 0, summary: 0 },
     durationMs: 41_400,
     model: "deepseek-v4.1-flash",
     ...overrides,
@@ -47,6 +49,34 @@ function makeTask(root: string): void {
       id: "sample-add",
       kind: "fix",
       prompt: "足し算に直してください。",
+    }),
+  );
+  writeFileSync(join(dir, "files", "package.json"), '{"type":"module"}\n');
+  writeFileSync(
+    join(dir, "files", "math.js"),
+    "export function add(a, b) {\n  return a - b;\n}\n",
+  );
+  writeFileSync(
+    join(dir, "grade", "math.test.js"),
+    'import assert from "node:assert";\nimport test from "node:test";\ntest("ok", () => {\n  assert.ok(true);\n});\n',
+  );
+  writeFileSync(
+    join(dir, "solution", "math.js"),
+    "export function add(a, b) {\n  return a + b;\n}\n",
+  );
+}
+
+function makeMultiTask(root: string): void {
+  const dir = join(root, "sample-add");
+  mkdirSync(join(dir, "files"), { recursive: true });
+  mkdirSync(join(dir, "grade"), { recursive: true });
+  mkdirSync(join(dir, "solution"), { recursive: true });
+  writeFileSync(
+    join(dir, "task.json"),
+    JSON.stringify({
+      id: "sample-add",
+      kind: "fix",
+      turns: ["まず直してください。", "次に変えてください。"],
     }),
   );
   writeFileSync(join(dir, "files", "package.json"), '{"type":"module"}\n');
@@ -219,6 +249,184 @@ describe("runOne", () => {
     });
     expect(result.error).toContain("429 Too Many Requests");
   });
+
+  it("文脈管理の action ごとの回数を記録する", async () => {
+    const tasksDir = join(dir, "tasks");
+    const workRoot = join(dir, "work");
+    makeTask(tasksDir);
+
+    let calls = 0;
+    const complete: Complete = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              {
+                id: "read-1",
+                name: "read",
+                arguments: JSON.stringify({ paths: ["math.js"] }),
+              },
+            ],
+          },
+          usage: { input: 10, cachedInput: 0, output: 3, reasoning: 0 },
+          finishReason: "tool_calls",
+        };
+      }
+      if (calls === 2) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              {
+                id: "edit-1",
+                name: "edit",
+                arguments: JSON.stringify({
+                  path: "math.js",
+                  edits: [
+                    { oldText: "return a - b;", newText: "return a + b;" },
+                  ],
+                }),
+              },
+            ],
+          },
+          usage: { input: 10, cachedInput: 0, output: 3, reasoning: 0 },
+          finishReason: "tool_calls",
+        };
+      }
+      return {
+        message: { role: "assistant", content: "done" },
+        usage: { input: 10, cachedInput: 0, output: 3, reasoning: 0 },
+        finishReason: "stop",
+      };
+    };
+
+    const task = loadTasks(tasksDir)[0];
+    const result = await runOne({
+      task,
+      condition: "default",
+      rep: 1,
+      workRoot,
+      config: {
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        contextWindow: 100000,
+      },
+      context: { mode: "always", mask: { window: 0, minTokens: 0 } },
+      turnTimeoutMs: 10_000,
+      complete,
+    });
+
+    expect(result.contextActions).toEqual({ mask: 1, prune: 0, summary: 0 });
+  });
+
+  it("課題の maxSteps で打ち切る", async () => {
+    const tasksDir = join(dir, "tasks");
+    const workRoot = join(dir, "work");
+    const taskDir = join(tasksDir, "steps");
+    for (const folder of ["files", "grade", "solution"]) {
+      mkdirSync(join(taskDir, folder), { recursive: true });
+    }
+    writeFileSync(
+      join(taskDir, "task.json"),
+      JSON.stringify({
+        id: "steps",
+        kind: "fix",
+        prompt: "直してください。",
+        maxSteps: 2,
+      }),
+    );
+    writeFileSync(
+      join(taskDir, "files", "package.json"),
+      '{"type":"module"}\n',
+    );
+    writeFileSync(
+      join(taskDir, "grade", "math.test.js"),
+      'import assert from "node:assert";\nimport test from "node:test";\ntest("ok", () => assert.ok(true));\n',
+    );
+
+    let calls = 0;
+    const complete: Complete = async () => {
+      calls += 1;
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            { id: `call-${calls}`, name: "missing-tool", arguments: "{}" },
+          ],
+        },
+        usage: { input: 1, cachedInput: 0, output: 1, reasoning: 0 },
+        finishReason: "tool_calls",
+      };
+    };
+
+    const task = loadTasks(tasksDir)[0];
+    const result = await runOne({
+      task,
+      condition: "none",
+      rep: 1,
+      workRoot,
+      config: {
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        contextWindow: 1000,
+      },
+      turnTimeoutMs: 10_000,
+      complete,
+    });
+
+    expect(calls).toBe(2);
+    expect(result.steps).toBe(2);
+    expect(result.stop).toBe("max-steps");
+  });
+
+  it("複数の turn を同じ会話で続けて実行する", async () => {
+    const tasksDir = join(dir, "tasks");
+    const workRoot = join(dir, "work");
+    makeMultiTask(tasksDir);
+
+    const seen: string[][] = [];
+    const complete: Complete = async (messages) => {
+      seen.push(
+        messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.content),
+      );
+      return {
+        message: { role: "assistant", content: "done" },
+        usage: { input: 10, cachedInput: 0, output: 3, reasoning: 0 },
+        finishReason: "stop",
+      };
+    };
+
+    const task = loadTasks(tasksDir)[0];
+    const result = await runOne({
+      task,
+      condition: "none",
+      rep: 1,
+      workRoot,
+      config: {
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        contextWindow: 1000,
+      },
+      turnTimeoutMs: 10_000,
+      complete,
+    });
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toEqual(["まず直してください。"]);
+    expect(seen[1]).toEqual(["まず直してください。", "次に変えてください。"]);
+    expect(result.turns).toBe(2);
+    expect(result.steps).toBe(2);
+    expect(result.usage.input).toBe(20);
+    expect(result.usage.output).toBe(6);
+    expect(result.stop).toBe("done");
+  });
 });
 
 describe("formatResultsTable", () => {
@@ -254,8 +462,30 @@ describe("formatResultsTable", () => {
 
     const table = formatResultsTable(records, ["default"], "test-model");
 
-    expect(table).toMatch(/^default\s+1\/2\s+50%\s+\$0\.0030\s+3\.0\s+1$/m);
-    expect(table).toMatch(/平均steps\s+失敗/);
+    expect(table).toMatch(
+      /^default\s+1\/2\s+50%\s+\$0\.0030\s+3\.0\s+1\.0\s+1$/m,
+    );
+    expect(table).toMatch(/平均steps\s+平均mask\s+失敗/);
     expect(table).toContain("1/2（失敗1）");
+  });
+
+  it("条件別に mask の平均回数を出す", () => {
+    const records = [
+      record({ rep: 1, contextActions: { mask: 2, prune: 0, summary: 0 } }),
+      record({ rep: 2, contextActions: { mask: 4, prune: 1, summary: 0 } }),
+      record({
+        rep: 3,
+        stop: "error",
+        steps: 0,
+        contextActions: { mask: 99, prune: 0, summary: 0 },
+        error: "429 Too Many Requests",
+      }),
+    ];
+
+    const table = formatResultsTable(records, ["default"], "test-model");
+
+    expect(table).toMatch(
+      /^default\s+2\/2\s+100%\s+\$0\.0021\s+4\.0\s+3\.0\s+1$/m,
+    );
   });
 });

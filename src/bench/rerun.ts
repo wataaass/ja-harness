@@ -1,5 +1,11 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { readConfig } from "../cli/config.js";
+import {
+  loadCatalogFromCache,
+  providerInfo,
+  resolveProvider,
+} from "../llm/catalog.js";
 import { type ConditionName, isConditionName } from "./conditions.js";
 import {
   type BenchRecord,
@@ -60,7 +66,16 @@ export function parseResultsJson(text: string): BenchResultsFile {
         "結果の JSON に task・condition・rep のない記録があります",
       );
     }
-    results.push(record as BenchRecord);
+    const actions = asRecord(record.contextActions);
+    results.push({
+      ...(record as BenchRecord),
+      turns: typeof record.turns === "number" ? record.turns : 1,
+      contextActions: {
+        mask: typeof actions.mask === "number" ? actions.mask : 0,
+        prune: typeof actions.prune === "number" ? actions.prune : 0,
+        summary: typeof actions.summary === "number" ? actions.summary : 0,
+      },
+    });
   }
 
   const conditions = Array.isArray(data.conditions)
@@ -141,7 +156,16 @@ export async function rerunErrors(
 ): Promise<RerunErrorsOutput> {
   const text = readFileSync(options.resultsPath, "utf8");
   const payload = parseResultsJson(text);
-  const config = readConfig(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const provider = resolveProvider(env);
+  loadCatalogFromCache({
+    home: env.JA_HARNESS_HOME ?? homedir(),
+    provider,
+  });
+  const config = readConfig(env, {
+    provider,
+    catalog: providerInfo(provider),
+  });
   if (payload.model !== config.model) {
     throw new Error(
       `モデルが違います: 結果は ${payload.model}、今の環境は ${config.model}`,

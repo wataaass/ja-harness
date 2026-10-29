@@ -1,0 +1,9 @@
+{
+  "id": "multi-todo",
+  "kind": "generate",
+  "turns": [
+    "`src/todo.js` に、次の3つの関数を作ってください。`addTodo(todos, title, options = {})` は受け取った配列を変えず、`{ id, title, done: false, due: null }` を末尾に足した新しい配列を返します。`id` は既存の最大の id に1を足した整数で、空なら1です。`title` が空でない文字列でなければ `TypeError` を投げ、メッセージに `title` を入れてください。`options.due` を渡すときは `\"YYYY-MM-DD\"` の文字列か `null` で、そのまま `due` に入れます。`completeTodo(todos, id)` は該当する項目を `done: true` にした新しい配列を返し、見つからなければ `Error` を投げてメッセージに id を入れてください。`listTodos(todos, options = {})` は `options.filter` が `\"all\"`（既定）・`\"active\"`・`\"done\"` のいずれかで絞り、id の昇順にした新しい配列を返します。それ以外は `RangeError` を投げてメッセージに `filter` を入れてください。入力を変更しないでください。`npm test` も通るようにしてください。",
+    "`src/todo.js` に期限の扱いを足してください。`listOverdue(todos, now)` は、`done` が false で `due` が null でない項目のうち、`due` が `now` の日付より前のものを id の昇順で返します。`now` は `Date` でも `\"YYYY-MM-DD\"` や日時つきの文字列でも受け取り、日付部分だけで比べてください。`now` の日付と同じ日は期限切れにしません。`addTodo` の `options.due` に日時つきの文字列を渡したときは、先頭10文字の日付だけを `due` に入れてください。あわせて `snoozeTodo(todos, id, due)` を足し、該当項目の `due` を新しい日付にして新しい配列を返してください。見つからなければ `Error`、`due` が `\"YYYY-MM-DD\"` の文字列でなければ `TypeError` を投げ、メッセージにそれぞれ id と `due` を入れてください。",
+    "`src/todo.js` に保存と読み込みを足してください。`saveTodos(path, todos)` は `{ \"version\": 1, \"todos\": [...] }` の形で UTF-8 の JSON を書き、末尾に改行を1つ入れます（整形は2スペース）。`loadTodos(path)` はそのファイルを読み、`todos` の配列を返します。ファイルがないときは `[]` を返し、JSON が壊れているときや `todos` が配列でないときは `Error` を投げ、メッセージに `path` を入れてください。①②で作った `addTodo`・`completeTodo`・`listTodos`・`listOverdue`・`snoozeTodo` は形も動きも変えずに使えるようにしてください。`npm test` も通るようにしてください。"
+  ]
+}

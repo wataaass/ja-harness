@@ -129,14 +129,163 @@ export async function* readSse(
   }
 }
 
+export const MAX_RETRIES = 4;
+const MAX_WAIT_MS = 60_000;
+const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+const NETWORK_ERROR_PATTERN =
+  /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|UND_ERR_|socket hang up|fetch failed|timeout|timed out/i;
+const BODY_WAIT_PATTERN = /after\s*(\d+(?:\.\d+)?)\s*s(?:ec(?:onds?)?)?\b/i;
+
+export type OnRetry = (attempt: number, waitMs: number, reason: string) => void;
+
+type Sleep = (ms: number, signal?: AbortSignal) => Promise<void>;
+
 export type ClientOptions = {
   baseUrl: string;
   model: string;
   apiKey?: string;
   headers?: Record<string, string>;
   fetch?: typeof fetch;
+  sleep?: Sleep;
+  onRetry?: OnRetry;
   maxTokens?: number;
+  reasoningEffort?: string;
 };
+
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+type Failure = {
+  error: unknown;
+  status?: number;
+  retryAfter: string | null;
+  body: string;
+};
+
+type Attempt = { response: Response } | { failure: Failure };
+
+async function attemptFetch(
+  doFetch: typeof fetch,
+  url: string,
+  init: RequestInit,
+): Promise<Attempt> {
+  let response: Response;
+  let text: string;
+  try {
+    response = await doFetch(url, init);
+    if (response.ok) {
+      return { response };
+    }
+    text = await response.text();
+  } catch (error) {
+    return { failure: { error, retryAfter: null, body: "" } };
+  }
+  return {
+    failure: {
+      error: new Error(`HTTP ${response.status}: ${text.slice(0, 500)}`),
+      status: response.status,
+      retryAfter: response.headers.get("retry-after"),
+      body: text,
+    },
+  };
+}
+
+function isNetworkError(error: unknown): boolean {
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return true;
+  }
+  const record = asRecord(error);
+  const cause = asRecord(record.cause);
+  const text = [record.message, record.code, cause.message, cause.code]
+    .filter((item) => typeof item === "string")
+    .join(" ");
+  return NETWORK_ERROR_PATTERN.test(text);
+}
+
+function isRetryable(failure: Failure): boolean {
+  return failure.status === undefined
+    ? isNetworkError(failure.error)
+    : RETRY_STATUSES.has(failure.status);
+}
+
+function retryAfterMs(value: string | null, now: number): number | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    return Number(trimmed) * 1000;
+  }
+  const date = Date.parse(trimmed);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - now);
+}
+
+function bodyWaitMs(text: string): number | undefined {
+  const match = BODY_WAIT_PATTERN.exec(text);
+  return match?.[1] === undefined ? undefined : Number(match[1]) * 1000;
+}
+
+function retryWaitMs(failure: Failure, retries: number): number {
+  const fromHeader = retryAfterMs(failure.retryAfter, Date.now());
+  const fromBody = bodyWaitMs(failure.body);
+  const backoff = 2 ** (retries + 1) * 1000;
+  return Math.min(fromHeader ?? fromBody ?? backoff, MAX_WAIT_MS);
+}
+
+function failureReason(failure: Failure): string {
+  if (failure.status !== undefined) {
+    return `HTTP ${failure.status}`;
+  }
+  return failure.error instanceof Error
+    ? failure.error.message
+    : String(failure.error);
+}
+
+type FetchWithRetry = {
+  doFetch: typeof fetch;
+  url: string;
+  init: RequestInit;
+  signal?: AbortSignal;
+  sleep: Sleep;
+  onRetry?: OnRetry;
+};
+
+// レスポンスの本文を読み始める前の失敗だけを送り直す。
+async function fetchWithRetry(o: FetchWithRetry): Promise<Response> {
+  for (let retries = 0; ; retries += 1) {
+    const attempt = await attemptFetch(o.doFetch, o.url, o.init);
+    if ("response" in attempt) {
+      return attempt.response;
+    }
+    const { failure } = attempt;
+    if (
+      retries >= MAX_RETRIES ||
+      o.signal?.aborted === true ||
+      !isRetryable(failure)
+    ) {
+      throw failure.error;
+    }
+    const waitMs = retryWaitMs(failure, retries);
+    o.onRetry?.(retries + 1, waitMs, failureReason(failure));
+    await o.sleep(waitMs, o.signal);
+    o.signal?.throwIfAborted();
+  }
+}
 
 type CompleteCallback = {
   onText?: (s: string) => void;
@@ -152,6 +301,7 @@ type ToolCallAccumulator = {
 
 export function createClient(opts: ClientOptions) {
   const doFetch = opts.fetch ?? fetch;
+  const sleep = opts.sleep ?? defaultSleep;
 
   async function complete(
     messages: Message[],
@@ -175,6 +325,9 @@ export function createClient(opts: ClientOptions) {
     if (opts.maxTokens !== undefined) {
       body.max_tokens = opts.maxTokens;
     }
+    if (opts.reasoningEffort !== undefined) {
+      body.reasoning_effort = opts.reasoningEffort;
+    }
     body.stream = true;
     body.stream_options = { include_usage: true };
 
@@ -186,17 +339,20 @@ export function createClient(opts: ClientOptions) {
     }
     Object.assign(headers, opts.headers);
 
-    const response = await doFetch(`${opts.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
+    const response = await fetchWithRetry({
+      doFetch,
+      url: `${opts.baseUrl}/chat/completions`,
+      init: {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: cb.signal,
+      },
       signal: cb.signal,
+      sleep,
+      ...(opts.onRetry === undefined ? {} : { onRetry: opts.onRetry }),
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`HTTP ${response.status}: ${text.slice(0, 500)}`);
-    }
     if (response.body === null) {
       throw new Error("応答の本文がありません");
     }

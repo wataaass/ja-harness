@@ -18,6 +18,7 @@ function record(overrides: Partial<BenchRecord> = {}): BenchRecord {
     steps: 0,
     stop: "error",
     usage: { input: 0, cachedInput: 0, output: 0, reasoning: 0 },
+    contextActions: { mask: 0, prune: 0, summary: 0 },
     durationMs: 2_400,
     model: "test-model",
     error: "429 Too Many Requests",
@@ -55,6 +56,20 @@ describe("parseResultsJson", () => {
 
     expect(parsed.conditions).toEqual(["none"]);
     expect(parsed.reps).toBe(2);
+  });
+
+  it("古い記録に contextActions がなくても0で補う", () => {
+    const old = record();
+    const { contextActions: _, ...rest } = old;
+    const parsed = parseResultsJson(
+      JSON.stringify({ model: "test-model", results: [rest] }),
+    );
+
+    expect(parsed.results[0]?.contextActions).toEqual({
+      mask: 0,
+      prune: 0,
+      summary: 0,
+    });
   });
 
   it("壊れた JSON はエラー", () => {

@@ -1,12 +1,45 @@
 import { join, relative } from "node:path";
 import type { Complete, RunOptions, Tool } from "../agent/loop.js";
-import { createContextManager, DEFAULT_CONTEXT } from "../context/manager.js";
+import {
+  type ContextConfig,
+  createContextManager,
+  DEFAULT_CONTEXT,
+} from "../context/manager.js";
 import { createFileSaver, limitToolResult } from "../context/spill.js";
 import type { Estimator } from "../context/tokens.js";
+import { modelPrices } from "../llm/models.js";
 
-export const CONDITIONS = ["none", "input-only", "default"] as const;
+export const CONDITIONS = [
+  "none",
+  "input-only",
+  "default",
+  "mask-off",
+] as const;
 
 export type ConditionName = (typeof CONDITIONS)[number];
+
+export type ContextOverride = Partial<Omit<ContextConfig, "prune" | "mask">> & {
+  prune?: Partial<ContextConfig["prune"]>;
+  mask?: Partial<ContextConfig["mask"]>;
+};
+
+export function mergeContext(
+  override: ContextOverride | undefined,
+): Partial<ContextConfig> {
+  if (override === undefined) {
+    return {};
+  }
+  const { prune, mask, ...rest } = override;
+  return {
+    ...rest,
+    ...(prune === undefined
+      ? {}
+      : { prune: { ...DEFAULT_CONTEXT.prune, ...prune } }),
+    ...(mask === undefined
+      ? {}
+      : { mask: { ...DEFAULT_CONTEXT.mask, ...mask } }),
+  };
+}
 
 export type ConditionOptions = {
   name: ConditionName;
@@ -14,6 +47,9 @@ export type ConditionOptions = {
   complete: Complete;
   contextWindow: number;
   estimate: Estimator;
+  model?: string;
+  context?: Partial<ContextConfig>;
+  now?: () => number;
 };
 
 export type ConditionParts = Pick<RunOptions, "limitResult" | "context">;
@@ -40,10 +76,18 @@ export function createCondition(o: ConditionOptions): ConditionParts {
     return { limitResult };
   }
 
+  const prices = o.model === undefined ? undefined : modelPrices(o.model);
   const manager = createContextManager({
-    config: { ...DEFAULT_CONTEXT, contextWindow: o.contextWindow },
+    config: {
+      ...DEFAULT_CONTEXT,
+      contextWindow: o.contextWindow,
+      ...o.context,
+      ...(prices === undefined ? {} : { prices }),
+      ...(o.name === "mask-off" ? { maskBelowThreshold: false } : {}),
+    },
     complete: o.complete,
     estimate: o.estimate,
+    ...(o.now === undefined ? {} : { now: o.now }),
   });
 
   return {

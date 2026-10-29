@@ -17,15 +17,26 @@ export function createEstimator(nonAsciiTokensPerChar = 0.7): Estimator {
   };
 }
 
+export function lastUserIndex(messages: Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === "user") {
+      return i;
+    }
+  }
+  return -1;
+}
+
 export function estimateMessages(
   messages: Message[],
   estimate: Estimator,
 ): number {
+  const lastUser = lastUserIndex(messages);
   let total = 0;
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
     total += 4 + estimate(message.content);
     if (message.role === "assistant") {
-      if (message.reasoning !== undefined) {
+      if (message.reasoning !== undefined && index > lastUser) {
         total += estimate(message.reasoning);
       }
       for (const call of message.toolCalls ?? []) {

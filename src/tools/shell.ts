@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Tool } from "../agent/loop.js";
-import type { Confirm } from "./confirm.js";
+import { type Confirm, toDecision } from "./confirm.js";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escapes are intentional
 const ANSI = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])/g;
@@ -48,6 +48,24 @@ type ShellResult = {
   timedOut: boolean;
 };
 
+export function shellInvocation(
+  command: string,
+  platform: string = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "win32") {
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ${command}`,
+      ],
+    };
+  }
+  return { command, args: [] };
+}
+
 function abortReason(signal?: AbortSignal): Error {
   const reason: unknown = signal?.reason;
   if (reason instanceof Error) {
@@ -64,6 +82,7 @@ function run(
   cwd: string,
   timeoutSeconds: number,
   signal?: AbortSignal,
+  platform: string = process.platform,
 ): Promise<ShellResult> {
   return new Promise<ShellResult>((resolve, reject) => {
     if (signal?.aborted) {
@@ -71,10 +90,12 @@ function run(
       return;
     }
 
-    const child = spawn(command, {
+    const invocation = shellInvocation(command, platform);
+    const child = spawn(invocation.command, invocation.args, {
       cwd,
-      shell: true,
-      detached: true,
+      ...(platform === "win32"
+        ? { windowsHide: true }
+        : { shell: true, detached: true }),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -92,6 +113,17 @@ function run(
 
     const killGroup = () => {
       if (child.pid === undefined) {
+        return;
+      }
+      if (platform === "win32") {
+        const killer = spawn(
+          "taskkill",
+          ["/pid", String(child.pid), "/T", "/F"],
+          { windowsHide: true },
+        );
+        killer.on("error", () => {
+          // already gone
+        });
         return;
       }
       try {
@@ -149,6 +181,11 @@ function run(
   });
 }
 
+function declined(message: string, reason: string | undefined): string {
+  const text = reason?.trim() ?? "";
+  return text === "" ? message : `${message}\nReason from the user: ${text}`;
+}
+
 export function createShellTool(cwd: string, confirm: Confirm): Tool {
   return {
     name: "shell",
@@ -161,6 +198,11 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
           type: "string",
           description: "Shell command to run.",
         },
+        description: {
+          type: "string",
+          description:
+            'Shown to the user when asking permission. Say what the command does in plain English, starting with a verb. Keep simple commands to 3-8 words, e.g. ls -> "List files in this folder", npm test -> "Run the tests", git log -5 -> "Show the last 5 commits". For a long or unclear command, name its goal, e.g. "Find TODO comments in src".',
+        },
         timeoutSeconds: {
           type: "integer",
           minimum: 1,
@@ -168,7 +210,7 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
           description: "Timeout in seconds (default 120).",
         },
       },
-      required: ["command"],
+      required: ["command", "description"],
     },
     maxResultTokens: 6000,
     async execute(args: unknown, signal?: AbortSignal): Promise<string> {
@@ -190,20 +232,25 @@ export function createShellTool(cwd: string, confirm: Confirm): Tool {
         );
       }
 
-      const firstLine = args.command.split(/\r?\n/)[0] ?? "";
-      const shown = firstLine.slice(0, 80);
-      const isSingleLine = !/[\r\n]/.test(args.command);
-      const detail =
-        isSingleLine && args.command.length <= 80 ? "" : args.command;
+      const description =
+        typeof args.description === "string"
+          ? args.description.trim().slice(0, 80)
+          : "";
+      const title = description === "" ? "Shell" : `Shell · ${description}`;
 
       signal?.throwIfAborted();
-      const accepted = await confirm({
-        tool: "shell",
-        title: `コマンドを実行します: ${shown}`,
-        detail,
-      });
-      if (!accepted) {
-        return "The user declined this command. Ask what they want instead.";
+      const decision = toDecision(
+        await confirm({
+          tool: "shell",
+          title,
+          detail: args.command,
+        }),
+      );
+      if (!decision.allow) {
+        return declined(
+          "The user declined this command. Ask what they want instead.",
+          decision.reason,
+        );
       }
 
       const result = await run(args.command, cwd, timeoutSeconds, signal);

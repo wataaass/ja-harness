@@ -22,7 +22,7 @@ describe("write", () => {
     expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("one\ntwo\n");
     expect(confirm).toHaveBeenCalledWith({
       tool: "write",
-      title: "a.txt を作ります（2行）",
+      title: "Write a.txt (2 lines)",
       detail: "one\ntwo",
     });
   });
@@ -73,9 +73,44 @@ describe("write", () => {
     await createWriteTool(cwd, confirm).execute({ path: "a.txt", content });
 
     const request = confirm.mock.calls[0]?.[0];
-    expect(request?.title).toBe("a.txt を作ります（45行）");
+    expect(request?.title).toBe("Write a.txt (45 lines)");
     expect(request?.detail).toContain("l40");
     expect(request?.detail).not.toContain("l41");
-    expect(request?.detail).toContain("…ほか5行");
+    expect(request?.detail).toContain("…5 more lines");
+  });
+});
+
+describe("write の却下の理由", () => {
+  it("理由を結果の末尾に付ける", async () => {
+    const cwd = setup();
+    const confirm = vi.fn<Confirm>(async () => ({
+      allow: false,
+      reason: "名前を変えて",
+    }));
+
+    const result = await createWriteTool(cwd, confirm).execute({
+      path: "a.txt",
+      content: "x\n",
+    });
+
+    expect(result).toBe(
+      "The user declined this write. Ask what they want instead.\nReason from the user: 名前を変えて",
+    );
+    expect(existsSync(join(cwd, "a.txt"))).toBe(false);
+  });
+});
+
+describe("write tool の beforeWrite", () => {
+  it("書く直前に呼ばれ、そのときファイルはまだ無い", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ja-harness-write-"));
+    const seen: boolean[] = [];
+    const confirm = vi.fn<Confirm>(async () => true);
+
+    await createWriteTool(cwd, confirm, (abs) => {
+      seen.push(existsSync(abs));
+    }).execute({ path: "a.txt", content: "hi\n" });
+
+    expect(seen).toEqual([false]);
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("hi\n");
   });
 });

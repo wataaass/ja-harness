@@ -1,0 +1,6 @@
+{
+  "id": "hard-query",
+  "kind": "fix",
+  "maxSteps": 120,
+  "prompt": "問い合わせエンジンで WHERE の結果がおかしいという報告があります。原因を直したうえで、docs/SPEC.md にある ORDER BY（複数のキーと ASC・DESC、NULL は最後）、LIMIT と OFFSET、GROUP BY と集計関数 COUNT・SUM・AVG・MIN・MAX、HAVING を使えるようにしてください。query(tables, sql) の形は変えないでください。npm test も通るようにしてください。"
+}
