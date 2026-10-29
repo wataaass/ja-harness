@@ -1,0 +1,8 @@
+{
+  "name": "hard-session",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test inventory/test/ template/test/ query/test/ migrate/test/"
+  }
+}
